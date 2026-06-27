@@ -1,5 +1,6 @@
 const express = require('express');
 const cors    = require('cors');
+const path    = require('path');
 const pool    = require('./db');
 require('dotenv').config();
 
@@ -8,6 +9,9 @@ const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+// ✅ Expose folder uploads supaya foto bisa diakses dari mobile
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* ═══════════════════════════════════════
    HELPER
@@ -22,8 +26,6 @@ function response(res, code, data) {
 
 /* ═══════════════════════════════════════
    1. LOGIN
-   POST /api/login
-   body: { username, password }
 ═══════════════════════════════════════ */
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
@@ -43,7 +45,6 @@ app.post('/api/login', async (req, res) => {
 
     const user = rows[0];
 
-    // simple password check (plaintext) — ganti bcrypt jika perlu
     if (user.password !== password)
       return response(res, 401, { message: 'Username atau password salah' });
 
@@ -60,7 +61,6 @@ app.post('/api/login', async (req, res) => {
 
 /* ═══════════════════════════════════════
    2. PROFILE
-   GET /api/profile?userId=1
 ═══════════════════════════════════════ */
 app.get('/api/profile', async (req, res) => {
   const userId = parseInt(req.query.userId);
@@ -94,8 +94,6 @@ app.get('/api/profile', async (req, res) => {
 
 /* ═══════════════════════════════════════
    3. UPDATE LOCATION
-   POST /api/update-location
-   body: { userId, lat, lng, ctddate, ctdtime, status }
 ═══════════════════════════════════════ */
 app.post('/api/update-location', async (req, res) => {
   const { userId, lat, lng, ctddate, ctdtime, status } = req.body;
@@ -105,19 +103,17 @@ app.post('/api/update-location', async (req, res) => {
 
   const validStatus = ['ONLINE', 'BERTUGAS', 'OFFLINE'];
   if (!validStatus.includes(status))
-    return response(res, 400, { message: 'Status tidak valid. Gunakan: ONLINE / BERTUGAS / OFFLINE' });
+    return response(res, 400, { message: 'Status tidak valid' });
 
   const datetime = `${ctddate} ${ctdtime}`;
 
   try {
-    // Simpan ke log
     await pool.query(
       `INSERT INTO tbl_location_log_mobile (user_id, lat, lng, ctddate, ctdtime, datetime, status)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [userId, lat, lng, ctddate, ctdtime, datetime, status]
     );
 
-    // Update posisi terakhir di tbl_petugas_mobile
     await pool.query(
       `UPDATE tbl_petugas_mobile SET lat = ?, lng = ?, status = ?, last_updated = ? WHERE user_id = ?`,
       [lat, lng, status, datetime, userId]
@@ -132,8 +128,6 @@ app.post('/api/update-location', async (req, res) => {
 
 /* ═══════════════════════════════════════
    4. UPDATE PROFILE
-   POST /api/update-profile
-   body: { userId, lat, lng, status, last_updated }
 ═══════════════════════════════════════ */
 app.post('/api/update-profile', async (req, res) => {
   const { userId, lat, lng, status, last_updated } = req.body;
@@ -155,6 +149,12 @@ app.post('/api/update-profile', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════
+   ✅ CAD ROUTES — mount di sini
+═══════════════════════════════════════ */
+const cadRoute = require('./cad.route');
+app.use('/api/cad', cadRoute);
+
+/* ═══════════════════════════════════════
    HEALTH CHECK
 ═══════════════════════════════════════ */
 app.get('/health', (_, res) => res.json({ status: 'ok', time: nowDatetime() }));
@@ -166,5 +166,11 @@ app.listen(PORT, () => {
   console.log(`   GET  /api/profile?userId=1`);
   console.log(`   POST /api/update-location`);
   console.log(`   POST /api/update-profile`);
+  console.log(`   GET  /api/cad/my-task?userId=1`);
+  console.log(`   POST /api/cad/terima-task`);
+  console.log(`   POST /api/cad/menuju`);
+  console.log(`   POST /api/cad/tiba`);
+  console.log(`   POST /api/cad/selesai`);
+  console.log(`   POST /api/cad/upload-photo`);
   console.log(`   GET  /health`);
 });
