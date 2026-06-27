@@ -10,7 +10,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const pool    = require('../db');
+const pool    = require('./db');
 const multer  = require('multer');
 const path    = require('path');
 const fs      = require('fs');
