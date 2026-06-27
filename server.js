@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// ✅ Expose folder uploads supaya foto bisa diakses dari mobile
+// Expose folder uploads supaya foto bisa diakses dari mobile
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* ═══════════════════════════════════════
@@ -149,10 +149,13 @@ app.post('/api/update-profile', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════
-   ✅ CAD ROUTES — mount di sini
+   ROUTES
 ═══════════════════════════════════════ */
-const cadRoute = require('./cad.route');
-app.use('/api/cad', cadRoute);
+const cadRoute        = require('./cad.route');
+const backofficeRoute = require('./backoffice.route');
+
+app.use('/api/cad',        cadRoute);
+app.use('/api/backoffice', backofficeRoute);
 
 /* ═══════════════════════════════════════
    HEALTH CHECK
@@ -161,16 +164,26 @@ app.get('/health', (_, res) => res.json({ status: 'ok', time: nowDatetime() }));
 
 app.listen(PORT, () => {
   console.log(`🚀 GPS Backend running at http://localhost:${PORT}`);
-  console.log(`📋 Endpoints:`);
+  console.log(`📋 Mobile Endpoints:`);
   console.log(`   POST /api/login`);
   console.log(`   GET  /api/profile?userId=1`);
   console.log(`   POST /api/update-location`);
   console.log(`   POST /api/update-profile`);
+  console.log(`📋 CAD Mobile Endpoints:`);
   console.log(`   GET  /api/cad/my-task?userId=1`);
+  console.log(`   GET  /api/cad/task-detail?taskId=1`);
   console.log(`   POST /api/cad/terima-task`);
   console.log(`   POST /api/cad/menuju`);
   console.log(`   POST /api/cad/tiba`);
   console.log(`   POST /api/cad/selesai`);
   console.log(`   POST /api/cad/upload-photo`);
+  console.log(`📋 Backoffice Endpoints:`);
+  console.log(`   GET  /api/backoffice/dashboard`);
+  console.log(`   GET  /api/backoffice/list-petugas`);
+  console.log(`   GET  /api/backoffice/all-task`);
+  console.log(`   GET  /api/backoffice/task-detail?taskId=1`);
+  console.log(`   POST /api/backoffice/create-task`);
+  console.log(`   POST /api/backoffice/assign-task`);
+  console.log(`   POST /api/backoffice/close-task`);
   console.log(`   GET  /health`);
 });
