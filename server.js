@@ -20,6 +20,11 @@ function nowDatetime() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function formatDatetime(val) {
+  if (!val) return '';
+  return new Date(val).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 function response(res, code, data) {
   return res.status(code).json(data);
 }
@@ -84,7 +89,7 @@ app.get('/api/profile', async (req, res) => {
       lat:          parseFloat(u.lat) || 0,
       lng:          parseFloat(u.lng) || 0,
       status:       u.status || 'OFFLINE',
-      last_updated: u.last_updated ? u.last_updated.toString().slice(0, 19) : '',
+      last_updated: formatDatetime(u.last_updated),
     });
   } catch (e) {
     console.error('[PROFILE]', e.message);
