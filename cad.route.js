@@ -55,12 +55,14 @@ router.get('/my-task', async (req, res) => {
        FROM tbl_cad_task t
        JOIN tbl_cad_assignment a ON a.task_id = t.id
        WHERE a.user_id = ?
-         AND t.status NOT IN ('CLOSED')
        ORDER BY
+         FIELD(a.status,'DITERIMA','MENUJU','TIBA','ASSIGNED','SELESAI'),
          FIELD(t.priority,'HIGH','MEDIUM','LOW'),
-         t.created_at ASC`,
+         t.created_at DESC`,
       [userId],
     );
+
+    // Semua task dikembalikan, Flutter filter sendiri pakai my_status
     return ok(res, { tasks: rows });
   } catch (e) {
     console.error('[CAD my-task]', e.message);

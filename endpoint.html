@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SM Mobile — API Tester</title>
+<style>
+  :root {
+    --bg:       #0D1117;
+    --surface:  #161B22;
+    --border:   #30363D;
+    --primary:  #1565C0;
+    --accent:   #2196F3;
+    --green:    #2ea043;
+    --red:      #da3633;
+    --orange:   #e3952a;
+    --text:     #E6EDF3;
+    --muted:    #8B949E;
+    --code-bg:  #0D1117;
+    --radius:   8px;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 13px;
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── SIDEBAR ── */
+  #sidebar {
+    width: 240px;
+    min-width: 240px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-header h1 {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+
+  .sidebar-header p {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .base-url-row {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .base-url-row label {
+    font-size: 10px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .base-url-row input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 5px 8px;
+    outline: none;
+  }
+
+  .base-url-row input:focus { border-color: var(--accent); }
+
+  .group-label {
+    padding: 12px 16px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .endpoint-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 16px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    width: 100%;
+    text-align: left;
+    color: var(--text);
+    font-size: 12px;
+    transition: background 0.1s;
+  }
+
+  .endpoint-btn:hover { background: rgba(33,150,243,0.08); }
+  .endpoint-btn.active { background: rgba(33,150,243,0.15); color: var(--accent); }
+
+  .method-badge {
+    font-size: 9px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    padding: 2px 5px;
+    border-radius: 3px;
+    min-width: 34px;
+    text-align: center;
+  }
+
+  .GET    { background: rgba(46,160,67,0.2);  color: #3fb950; }
+  .POST   { background: rgba(33,150,243,0.2); color: #58a6ff; }
+
+  /* ── MAIN ── */
+  #main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #top-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  #top-bar .method-display {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    color: #58a6ff;
+    min-width: 40px;
+  }
+
+  #top-bar .url-display {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    flex: 1;
+  }
+
+  #top-bar .url-display span { color: var(--text); }
+
+  #send-btn {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 7px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  #send-btn:hover  { background: var(--accent); }
+  #send-btn:active { transform: scale(0.97); }
+
+  #body-area {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── REQUEST PANEL ── */
+  #request-panel {
+    width: 45%;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-title {
+    padding: 10px 16px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--muted);
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  #params-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  .field-group { margin-bottom: 12px; }
+
+  .field-group label {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .field-group label span {
+    color: var(--red);
+    margin-left: 2px;
+  }
+
+  .field-group input,
+  .field-group textarea,
+  .field-group select {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 12px;
+    font-family: var(--font-mono);
+    padding: 7px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .field-group input:focus,
+  .field-group textarea:focus,
+  .field-group select:focus { border-color: var(--accent); }
+
+  .field-group textarea { resize: vertical; min-height: 80px; }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .hint {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 3px;
+  }
+
+  /* ── RESPONSE PANEL ── */
+  #response-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  #response-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  #response-header .panel-title { padding: 0; border: none; background: none; }
+
+  #status-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    padding: 2px 8px;
+    border-radius: 99px;
+    display: none;
+  }
+
+  .status-ok  { background: rgba(46,160,67,0.2);  color: #3fb950; display: inline !important; }
+  .status-err { background: rgba(218,54,51,0.2);  color: #f85149; display: inline !important; }
+
+  #time-badge {
+    font-size: 10px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+
+  #copy-btn {
+    margin-left: auto;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  #copy-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  #response-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  pre {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  .json-key    { color: #79c0ff; }
+  .json-str    { color: #a5d6ff; }
+  .json-num    { color: #ff7b72; }
+  .json-bool   { color: #ff9e64; }
+  .json-null   { color: var(--muted); }
+
+  .placeholder {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    margin-top: 60px;
+  }
+
+  .placeholder svg { opacity: 0.3; margin-bottom: 10px; }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .loading { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<div id="sidebar">
+  <div class="sidebar-header">
+    <h1>⚡ SM Mobile API</h1>
+    <p>Backoffice Tester</p>
+  </div>
+  <div class="base-url-row">
+    <label>Base URL</label>
+    <input id="base-url" value="http://103.114.110.67:3005">
+  </div>
+
+  <div class="group-label">Auth & Profil</div>
+  <button class="endpoint-btn active" onclick="select('login')" id="btn-login">
+    <span class="method-badge POST">POST</span> Login
+  </button>
+  <button class="endpoint-btn" onclick="select('profile')" id="btn-profile">
+    <span class="method-badge GET">GET</span> Profile
+  </button>
+
+  <div class="group-label">CAD — Mobile</div>
+  <button class="endpoint-btn" onclick="select('my-task')" id="btn-my-task">
+    <span class="method-badge GET">GET</span> My Task
+  </button>
+  <button class="endpoint-btn" onclick="select('task-detail-mobile')" id="btn-task-detail-mobile">
+    <span class="method-badge GET">GET</span> Task Detail
+  </button>
+  <button class="endpoint-btn" onclick="select('terima-task')" id="btn-terima-task">
+    <span class="method-badge POST">POST</span> Terima Task
+  </button>
+  <button class="endpoint-btn" onclick="select('menuju')" id="btn-menuju">
+    <span class="method-badge POST">POST</span> Menuju TKP
+  </button>
+  <button class="endpoint-btn" onclick="select('tiba')" id="btn-tiba">
+    <span class="method-badge POST">POST</span> Tiba di TKP
+  </button>
+  <button class="endpoint-btn" onclick="select('selesai')" id="btn-selesai">
+    <span class="method-badge POST">POST</span> Selesai
+  </button>
+
+  <div class="group-label">Backoffice</div>
+  <button class="endpoint-btn" onclick="select('dashboard')" id="btn-dashboard">
+    <span class="method-badge GET">GET</span> Dashboard
+  </button>
+  <button class="endpoint-btn" onclick="select('list-petugas')" id="btn-list-petugas">
+    <span class="method-badge GET">GET</span> List Petugas
+  </button>
+  <button class="endpoint-btn" onclick="select('all-task')" id="btn-all-task">
+    <span class="method-badge GET">GET</span> All Task
+  </button>
+  <button class="endpoint-btn" onclick="select('task-detail-bo')" id="btn-task-detail-bo">
+    <span class="method-badge GET">GET</span> Task Detail
+  </button>
+  <button class="endpoint-btn" onclick="select('create-task')" id="btn-create-task">
+    <span class="method-badge POST">POST</span> Create Task
+  </button>
+  <button class="endpoint-btn" onclick="select('assign-task')" id="btn-assign-task">
+    <span class="method-badge POST">POST</span> Assign Task
+  </button>
+  <button class="endpoint-btn" onclick="select('close-task')" id="btn-close-task">
+    <span class="method-badge POST">POST</span> Close Task
+  </button>
+
+  <div class="group-label">System</div>
+  <button class="endpoint-btn" onclick="select('health')" id="btn-health">
+    <span class="method-badge GET">GET</span> Health Check
+  </button>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <div id="top-bar">
+    <span class="method-display" id="method-display">POST</span>
+    <span class="url-display" id="url-display"><span>/api/login</span></span>
+    <button id="send-btn" onclick="sendRequest()">▶ Send</button>
+  </div>
+
+  <div id="body-area">
+    <!-- REQUEST -->
+    <div id="request-panel">
+      <div class="panel-title">Request</div>
+      <div id="params-area"></div>
+    </div>
+
+    <!-- RESPONSE -->
+    <div id="response-panel">
+      <div id="response-header">
+        <div class="panel-title">Response</div>
+        <span id="status-badge"></span>
+        <span id="time-badge"></span>
+        <button id="copy-btn" onclick="copyResponse()">Copy</button>
+      </div>
+      <div id="response-body">
+        <div class="placeholder">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+          </svg>
+          <p>Pilih endpoint dan klik Send</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const ENDPOINTS = {
+  'login': {
+    method: 'POST', path: '/api/login',
+    fields: [
+      { key: 'username', label: 'Username', required: true, default: 'petugas01' },
+      { key: 'password', label: 'Password', required: true, default: '123456' },
+    ]
+  },
+  'profile': {
+    method: 'GET', path: '/api/profile',
+    query: [
+      { key: 'userId', label: 'userId', required: true, default: '1' },
+    ]
+  },
+  'my-task': {
+    method: 'GET', path: '/api/cad/my-task',
+    query: [
+      { key: 'userId', label: 'userId', required: true, default: '1' },
+    ]
+  },
+  'task-detail-mobile': {
+    method: 'GET', path: '/api/cad/task-detail',
+    query: [
+      { key: 'taskId', label: 'taskId', required: true, default: '1' },
+    ]
+  },
+  'terima-task': {
+    method: 'POST', path: '/api/cad/terima-task',
+    fields: [
+      { key: 'taskId',  label: 'taskId',  required: true, default: '1' },
+      { key: 'userId',  label: 'userId',  required: true, default: '1' },
+    ]
+  },
+  'menuju': {
+    method: 'POST', path: '/api/cad/menuju',
+    fields: [
+      { key: 'taskId',  label: 'taskId',  required: true, default: '1' },
+      { key: 'userId',  label: 'userId',  required: true, default: '1' },
+    ]
+  },
+  'tiba': {
+    method: 'POST', path: '/api/cad/tiba',
+    fields: [
+      { key: 'taskId',  label: 'taskId',  required: true, default: '1' },
+      { key: 'userId',  label: 'userId',  required: true, default: '1' },
+    ]
+  },
+  'selesai': {
+    method: 'POST', path: '/api/cad/selesai',
+    fields: [
+      { key: 'taskId',     label: 'taskId',     required: true,  default: '1' },
+      { key: 'userId',     label: 'userId',     required: true,  default: '1' },
+      { key: 'keterangan', label: 'Keterangan', required: false, default: 'Laporan selesai ditangani' },
+      { key: 'photos',     label: 'Photos (JSON array URL)', required: false,
+        textarea: true, default: '[]', hint: 'Contoh: ["/uploads/cad/foto1.jpg"]' },
+    ]
+  },
+  'dashboard': {
+    method: 'GET', path: '/api/backoffice/dashboard',
+    query: []
+  },
+  'list-petugas': {
+    method: 'GET', path: '/api/backoffice/list-petugas',
+    query: [
+      { key: 'status', label: 'status (opsional)', default: '', hint: 'ONLINE | BERTUGAS | OFFLINE' },
+    ]
+  },
+  'all-task': {
+    method: 'GET', path: '/api/backoffice/all-task',
+    query: [
+      { key: 'status',   label: 'status (opsional)',   default: '' },
+      { key: 'priority', label: 'priority (opsional)', default: '', hint: 'HIGH | MEDIUM | LOW' },
+      { key: 'page',     label: 'page',   default: '1' },
+      { key: 'limit',    label: 'limit',  default: '20' },
+    ]
+  },
+  'task-detail-bo': {
+    method: 'GET', path: '/api/backoffice/task-detail',
+    query: [
+      { key: 'taskId', label: 'taskId', required: true, default: '1' },
+    ]
+  },
+  'create-task': {
+    method: 'POST', path: '/api/backoffice/create-task',
+    fields: [
+      { key: 'title',      label: 'title',      required: true,  default: 'Laporan Kecelakaan' },
+      { key: 'address',    label: 'address',    required: true,  default: 'Jl. Sudirman No.10' },
+      { key: 'latitude',   label: 'latitude',   required: false, default: '-6.200000' },
+      { key: 'longitude',  label: 'longitude',  required: false, default: '106.816666' },
+      { key: 'priority',   label: 'priority',   required: false, default: 'HIGH',
+        select: ['HIGH','MEDIUM','LOW'] },
+      { key: 'pelapor',    label: 'pelapor',    required: false, default: 'Warga' },
+      { key: 'keterangan', label: 'keterangan', required: false, default: '' },
+      { key: 'created_by', label: 'created_by (userId backoffice)', required: false, default: '1' },
+      { key: 'assign_to',  label: 'assign_to (JSON array userId)', required: true,
+        textarea: true, default: '[1, 2]', hint: 'Contoh: [1, 2, 3]' },
+    ]
+  },
+  'assign-task': {
+    method: 'POST', path: '/api/backoffice/assign-task',
+    fields: [
+      { key: 'taskId',   label: 'taskId',   required: true, default: '1' },
+      { key: 'user_ids', label: 'user_ids (JSON array)', required: true,
+        textarea: true, default: '[3]', hint: 'Petugas tambahan' },
+    ]
+  },
+  'close-task': {
+    method: 'POST', path: '/api/backoffice/close-task',
+    fields: [
+      { key: 'taskId',    label: 'taskId',    required: true,  default: '1' },
+      { key: 'closed_by', label: 'closed_by (userId backoffice)', required: true, default: '1' },
+      { key: 'catatan',   label: 'catatan',   required: false, default: 'Task telah diselesaikan' },
+      { key: 'force',     label: 'force',     required: false, default: 'false',
+        select: ['false','true'], hint: 'true = paksa close meski belum ada bukti' },
+    ]
+  },
+  'health': {
+    method: 'GET', path: '/health',
+    query: []
+  },
+};
+
+let currentKey = 'login';
+
+function select(key) {
+  currentKey = key;
+  document.querySelectorAll('.endpoint-btn').forEach(b => b.classList.remove('active'));
+  const btn = document.getElementById('btn-' + key);
+  if (btn) btn.classList.add('active');
+
+  const ep = ENDPOINTS[key];
+  document.getElementById('method-display').textContent = ep.method;
+  document.getElementById('url-display').innerHTML =
+    `<span style="color:var(--muted)">${document.getElementById('base-url').value}</span><span>${ep.path}</span>`;
+
+  renderParams(ep);
+  clearResponse();
+}
+
+function renderParams(ep) {
+  const area = document.getElementById('params-area');
+  area.innerHTML = '';
+
+  const fields = ep.fields || ep.query || [];
+  if (fields.length === 0) {
+    area.innerHTML = '<p style="color:var(--muted);font-size:12px;padding:8px 0">Tidak ada parameter</p>';
+    return;
+  }
+
+  fields.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'field-group';
+
+    const label = document.createElement('label');
+    label.innerHTML = f.label + (f.required ? '<span>*</span>' : '');
+    div.appendChild(label);
+
+    let input;
+    if (f.select) {
+      input = document.createElement('select');
+      f.select.forEach(opt => {
+        const o = document.createElement('option');
+        o.value = opt; o.textContent = opt;
+        if (opt === f.default) o.selected = true;
+        input.appendChild(o);
+      });
+    } else if (f.textarea) {
+      input = document.createElement('textarea');
+      input.value = f.default || '';
+      input.rows = 3;
+    } else {
+      input = document.createElement('input');
+      input.value = f.default || '';
+      input.placeholder = f.hint || '';
+    }
+
+    input.id = 'field-' + f.key;
+    div.appendChild(input);
+
+    if (f.hint && !f.select) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = f.hint;
+      div.appendChild(hint);
+    }
+
+    area.appendChild(div);
+  });
+}
+
+function getFieldValue(key) {
+  const el = document.getElementById('field-' + key);
+  return el ? el.value : '';
+}
+
+async function sendRequest() {
+  const ep     = ENDPOINTS[currentKey];
+  const base   = document.getElementById('base-url').value.replace(/\/$/, '');
+  const fields = ep.fields || ep.query || [];
+
+  let url  = base + ep.path;
+  let body = null;
+
+  if (ep.method === 'GET') {
+    const params = new URLSearchParams();
+    fields.forEach(f => {
+      const v = getFieldValue(f.key);
+      if (v) params.set(f.key, v);
+    });
+    if ([...params].length) url += '?' + params.toString();
+  } else {
+    const obj = {};
+    fields.forEach(f => {
+      let v = getFieldValue(f.key);
+      if (v === '') return;
+      // parse JSON arrays/booleans
+      try {
+        const parsed = JSON.parse(v);
+        obj[f.key] = parsed;
+      } catch {
+        // number?
+        if (!isNaN(v) && v !== '') obj[f.key] = Number(v);
+        else obj[f.key] = v;
+      }
+    });
+    body = JSON.stringify(obj, null, 2);
+  }
+
+  // update URL display
+  document.getElementById('url-display').innerHTML =
+    `<span style="color:var(--muted)">${base}</span><span>${url.replace(base,'')}</span>`;
+
+  document.getElementById('response-body').innerHTML =
+    '<p class="loading">Mengirim request...</p>';
+  document.getElementById('status-badge').className = '';
+  document.getElementById('status-badge').textContent = '';
+  document.getElementById('time-badge').textContent = '';
+
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: ep.method,
+      headers: { 'Content-Type': 'application/json' },
+      body: ep.method === 'POST' ? body : undefined,
+    });
+    const ms   = Date.now() - t0;
+    const data = await res.json();
+
+    const badge = document.getElementById('status-badge');
+    badge.textContent = res.status + ' ' + (res.ok ? 'OK' : 'ERROR');
+    badge.className   = res.ok ? 'status-ok' : 'status-err';
+
+    document.getElementById('time-badge').textContent = ms + ' ms';
+    document.getElementById('response-body').innerHTML =
+      '<pre>' + syntaxHighlight(JSON.stringify(data, null, 2)) + '</pre>';
+  } catch (e) {
+    document.getElementById('status-badge').textContent = 'ERROR';
+    document.getElementById('status-badge').className = 'status-err';
+    document.getElementById('time-badge').textContent = (Date.now() - t0) + ' ms';
+    document.getElementById('response-body').innerHTML =
+      '<pre style="color:var(--red)">' + e.message + '</pre>';
+  }
+}
+
+function syntaxHighlight(json) {
+  return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, match => {
+    if (/^"/.test(match)) {
+      if (/:$/.test(match)) return `<span class="json-key">${match}</span>`;
+      return `<span class="json-str">${match}</span>`;
+    }
+    if (/true|false/.test(match)) return `<span class="json-bool">${match}</span>`;
+    if (/null/.test(match))       return `<span class="json-null">${match}</span>`;
+    return `<span class="json-num">${match}</span>`;
+  });
+}
+
+function clearResponse() {
+  document.getElementById('response-body').innerHTML =
+    '<div class="placeholder"><p>Klik Send untuk mengirim request</p></div>';
+  document.getElementById('status-badge').className = '';
+  document.getElementById('status-badge').textContent = '';
+  document.getElementById('time-badge').textContent = '';
+}
+
+function copyResponse() {
+  const pre = document.querySelector('#response-body pre');
+  if (!pre) return;
+  navigator.clipboard.writeText(pre.innerText);
+  const btn = document.getElementById('copy-btn');
+  btn.textContent = 'Copied!';
+  setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+
+// init
+select('login');
+</script>
+</body>
+</html>
