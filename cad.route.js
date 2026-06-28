@@ -55,14 +55,12 @@ router.get('/my-task', async (req, res) => {
        FROM tbl_cad_task t
        JOIN tbl_cad_assignment a ON a.task_id = t.id
        WHERE a.user_id = ?
+         AND t.status NOT IN ('CLOSED')
        ORDER BY
-         FIELD(a.status,'DITERIMA','MENUJU','TIBA','ASSIGNED','SELESAI'),
          FIELD(t.priority,'HIGH','MEDIUM','LOW'),
-         t.created_at DESC`,
+         t.created_at ASC`,
       [userId],
     );
-
-    // Semua task dikembalikan, Flutter filter sendiri pakai my_status
     return ok(res, { tasks: rows });
   } catch (e) {
     console.error('[CAD my-task]', e.message);
@@ -301,6 +299,59 @@ router.post('/upload-photo', upload.single('photo'), async (req, res) => {
   const fileUrl = `/uploads/cad/${req.file.filename}`;
 
   return ok(res, { url: fileUrl, filename: req.file.filename });
+});
+
+
+/* ═══════════════════════════════════════════════════
+   STATS — GET /api/cad/stats?userId=1
+   Statistik CAD petugas: total, hari ini, minggu, bulan,
+   rata-rata durasi penanganan
+═══════════════════════════════════════════════════ */
+router.get('/stats', async (req, res) => {
+  const userId = parseInt(req.query.userId);
+  if (!userId) return err(res, 'userId wajib', 400);
+
+  try {
+    const [[row]] = await pool.query(`
+      SELECT
+        COUNT(*)                                                              AS total,
+        SUM(CASE WHEN a.status = 'SELESAI'                    THEN 1 ELSE 0 END) AS total_selesai,
+        SUM(CASE WHEN DATE(a.waktu_selesai) = CURDATE()       THEN 1 ELSE 0 END) AS hari_ini,
+        SUM(CASE WHEN YEARWEEK(a.waktu_selesai, 1)
+                      = YEARWEEK(CURDATE(), 1)                THEN 1 ELSE 0 END) AS minggu_ini,
+        SUM(CASE WHEN MONTH(a.waktu_selesai) = MONTH(CURDATE())
+                  AND YEAR(a.waktu_selesai) = YEAR(CURDATE()) THEN 1 ELSE 0 END) AS bulan_ini,
+        ROUND(
+          AVG(
+            CASE WHEN a.status = 'SELESAI' AND a.waktu_selesai IS NOT NULL
+            THEN TIMESTAMPDIFF(MINUTE, a.created_at, a.waktu_selesai)
+            END
+          )
+        )                                                                     AS avg_minutes
+      FROM tbl_cad_assignment a
+      WHERE a.user_id = ?
+    `, [userId]);
+
+    // Format avg menjadi string "Xj Ym" atau "Ym"
+    let avg_duration = '-';
+    if (row.avg_minutes) {
+      const h = Math.floor(row.avg_minutes / 60);
+      const m = row.avg_minutes % 60;
+      avg_duration = h > 0 ? `${h}j ${m}m` : `${m} menit`;
+    }
+
+    return ok(res, {
+      total:        row.total         || 0,
+      total_selesai:row.total_selesai || 0,
+      hari_ini:     row.hari_ini      || 0,
+      minggu_ini:   row.minggu_ini    || 0,
+      bulan_ini:    row.bulan_ini     || 0,
+      avg_duration,
+    });
+  } catch (e) {
+    console.error('[CAD stats]', e.message);
+    return err(res, 'Server error');
+  }
 });
 
 module.exports = router;
