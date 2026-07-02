@@ -9,6 +9,8 @@ const pool    = require('./db');
 const multer  = require('multer');
 const path    = require('path');
 const fs      = require('fs');
+const { emitToUser, emitToBackoffice } = require('./socket');
+const { sendPushToMultiple } = require('./firebase_admin');
 
 /* ═══════════════════════════════
    MULTER — simpan foto ke /uploads/cad/
@@ -174,6 +176,12 @@ router.post('/menuju', async (req, res) => {
     );
 
     await conn.commit();
+
+    // Realtime: kabari backoffice progress petugas
+    emitToBackoffice('task-progress', {
+      taskId, userId, status: 'MENUJU', timestamp: now(),
+    });
+
     return ok(res, { message: 'Status: Menuju TKP' });
   } catch (e) {
     await conn.rollback();
@@ -210,6 +218,11 @@ router.post('/tiba', async (req, res) => {
     );
 
     await conn.commit();
+
+    emitToBackoffice('task-progress', {
+      taskId, userId, status: 'TIBA', timestamp: now(),
+    });
+
     return ok(res, { message: 'Status: Tiba di TKP' });
   } catch (e) {
     await conn.rollback();
@@ -275,6 +288,39 @@ router.post('/selesai', async (req, res) => {
     }
 
     await conn.commit();
+
+    // ── Realtime: kabari backoffice bahwa petugas sudah selesai ──
+    emitToBackoffice('task-selesai', {
+      taskId, userId, waktu_selesai: waktuSelesai,
+    });
+
+    // ── Push FCM ke semua backoffice yang punya token ──
+    try {
+      const [boRows] = await pool.query(
+        `SELECT fcm_token FROM tbl_backoffice_user WHERE fcm_token IS NOT NULL`
+      );
+      const [[petugas]] = await pool.query(
+        `SELECT nama FROM tbl_petugas_mobile WHERE user_id = ? LIMIT 1`,
+        [userId],
+      );
+      const [[taskRow]] = await pool.query(
+        `SELECT title FROM tbl_cad_task WHERE id = ? LIMIT 1`,
+        [taskId],
+      );
+
+      const tokens = boRows.map(r => r.fcm_token).filter(Boolean);
+      if (tokens.length > 0) {
+        await sendPushToMultiple(
+          tokens,
+          'Tugas Selesai',
+          `${petugas?.nama || 'Petugas'} telah menyelesaikan: ${taskRow?.title || 'CAD #' + taskId}`,
+          { type: 'task_selesai', taskId: String(taskId) },
+        );
+      }
+    } catch (pushErr) {
+      console.error('[PUSH selesai]', pushErr.message);
+    }
+
     return ok(res, { message: 'Task selesai', waktu_selesai: waktuSelesai });
   } catch (e) {
     await conn.rollback();
@@ -304,8 +350,6 @@ router.post('/upload-photo', upload.single('photo'), async (req, res) => {
 
 /* ═══════════════════════════════════════════════════
    STATS — GET /api/cad/stats?userId=1
-   Statistik CAD petugas: total, hari ini, minggu, bulan,
-   rata-rata durasi penanganan
 ═══════════════════════════════════════════════════ */
 router.get('/stats', async (req, res) => {
   const userId = parseInt(req.query.userId);
@@ -332,7 +376,6 @@ router.get('/stats', async (req, res) => {
       WHERE a.user_id = ?
     `, [userId]);
 
-    // Format avg menjadi string "Xj Ym" atau "Ym"
     let avg_duration = '-';
     if (row.avg_minutes) {
       const h = Math.floor(row.avg_minutes / 60);
@@ -341,11 +384,11 @@ router.get('/stats', async (req, res) => {
     }
 
     return ok(res, {
-      total:        row.total         || 0,
-      total_selesai:row.total_selesai || 0,
-      hari_ini:     row.hari_ini      || 0,
-      minggu_ini:   row.minggu_ini    || 0,
-      bulan_ini:    row.bulan_ini     || 0,
+      total:         row.total         || 0,
+      total_selesai: row.total_selesai || 0,
+      hari_ini:      row.hari_ini      || 0,
+      minggu_ini:    row.minggu_ini    || 0,
+      bulan_ini:     row.bulan_ini     || 0,
       avg_duration,
     });
   } catch (e) {

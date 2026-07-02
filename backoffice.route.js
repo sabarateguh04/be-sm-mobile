@@ -6,6 +6,8 @@
 const express = require('express');
 const router  = express.Router();
 const pool    = require('./db');
+const { emitToUser } = require('./socket');
+const { sendPushToMultiple } = require('./firebase_admin');
 
 /* ═══════════════════════════════
    HELPER
@@ -93,6 +95,34 @@ router.post('/create-task', async (req, res) => {
     }
 
     await conn.commit();
+
+    // ── Realtime + Push ke petugas yang di-assign ──
+    try {
+      const [petugasRows] = await pool.query(
+        `SELECT user_id, nama, fcm_token FROM tbl_petugas_mobile WHERE user_id IN (?)`,
+        [assign_to],
+      );
+
+      const tokens = petugasRows.map(p => p.fcm_token).filter(Boolean);
+
+      for (const p of petugasRows) {
+        emitToUser(p.user_id, 'new-task', {
+          taskId, title, address, priority,
+        });
+      }
+
+      if (tokens.length > 0) {
+        await sendPushToMultiple(
+          tokens,
+          'Tugas Baru',
+          `${title} — ${address}`,
+          { type: 'new_task', taskId: String(taskId) },
+        );
+      }
+    } catch (pushErr) {
+      console.error('[PUSH create-task]', pushErr.message);
+    }
+
     return ok(res, { message: 'Task berhasil dibuat', taskId, assigned: assign_to.length });
   } catch (e) {
     await conn.rollback();
@@ -145,6 +175,41 @@ router.post('/assign-task', async (req, res) => {
     }
 
     await conn.commit();
+
+    // ── Realtime + Push ke petugas baru yang ditambahkan ──
+    try {
+      const [petugasRows] = await pool.query(
+        `SELECT user_id, nama, fcm_token FROM tbl_petugas_mobile WHERE user_id IN (?)`,
+        [user_ids],
+      );
+      const [[taskInfo]] = await pool.query(
+        `SELECT title, address, priority FROM tbl_cad_task WHERE id = ? LIMIT 1`,
+        [taskId],
+      );
+
+      const tokens = petugasRows.map(p => p.fcm_token).filter(Boolean);
+
+      for (const p of petugasRows) {
+        emitToUser(p.user_id, 'new-task', {
+          taskId,
+          title:    taskInfo?.title,
+          address:  taskInfo?.address,
+          priority: taskInfo?.priority,
+        });
+      }
+
+      if (tokens.length > 0) {
+        await sendPushToMultiple(
+          tokens,
+          'Tugas Baru',
+          `${taskInfo?.title || 'CAD #' + taskId} — ${taskInfo?.address || ''}`,
+          { type: 'new_task', taskId: String(taskId) },
+        );
+      }
+    } catch (pushErr) {
+      console.error('[PUSH assign-task]', pushErr.message);
+    }
+
     return ok(res, { message: `${added} petugas berhasil di-assign`, added });
   } catch (e) {
     await conn.rollback();

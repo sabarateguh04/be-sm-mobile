@@ -1,8 +1,11 @@
 const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
+const http    = require('http');
 const pool    = require('./db');
 require('dotenv').config();
+
+const { initSocket } = require('./socket');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -10,7 +13,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Expose folder uploads supaya foto bisa diakses dari mobile
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 /* ═══════════════════════════════════════
@@ -19,12 +21,10 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 function nowDatetime() {
   return new Date().toISOString().slice(0, 19).replace('T', ' ');
 }
-
 function formatDatetime(val) {
   if (!val) return '';
   return new Date(val).toISOString().slice(0, 19).replace('T', ' ');
 }
-
 function response(res, code, data) {
   return res.status(code).json(data);
 }
@@ -49,7 +49,6 @@ app.post('/api/login', async (req, res) => {
       return response(res, 401, { message: 'Username atau password salah' });
 
     const user = rows[0];
-
     if (user.password !== password)
       return response(res, 401, { message: 'Username atau password salah' });
 
@@ -154,6 +153,35 @@ app.post('/api/update-profile', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════
+   5. SAVE FCM TOKEN
+   POST /api/save-fcm-token
+   body: { userId, fcmToken, role }  → role: 'petugas' | 'backoffice'
+═══════════════════════════════════════ */
+app.post('/api/save-fcm-token', async (req, res) => {
+  const { userId, fcmToken, role = 'petugas' } = req.body;
+  if (!userId || !fcmToken)
+    return response(res, 400, { message: 'userId & fcmToken wajib' });
+
+  try {
+    if (role === 'backoffice') {
+      await pool.query(
+        `UPDATE tbl_backoffice_user SET fcm_token = ? WHERE user_id = ?`,
+        [fcmToken, userId],
+      );
+    } else {
+      await pool.query(
+        `UPDATE tbl_petugas_mobile SET fcm_token = ? WHERE user_id = ?`,
+        [fcmToken, userId],
+      );
+    }
+    return response(res, 200, { message: 'Token tersimpan' });
+  } catch (e) {
+    console.error('[SAVE-FCM-TOKEN]', e.message);
+    return response(res, 500, { message: 'Server error' });
+  }
+});
+
+/* ═══════════════════════════════════════
    ROUTES
 ═══════════════════════════════════════ */
 const cadRoute        = require('./cad.route');
@@ -167,16 +195,24 @@ app.use('/api/backoffice', backofficeRoute);
 ═══════════════════════════════════════ */
 app.get('/health', (_, res) => res.json({ status: 'ok', time: nowDatetime() }));
 
-app.listen(PORT, () => {
-  console.log(`🚀 GPS Backend running at http://localhost:${PORT}`);
+/* ═══════════════════════════════════════
+   HTTP SERVER + SOCKET.IO
+═══════════════════════════════════════ */
+const httpServer = http.createServer(app);
+initSocket(httpServer);
+
+httpServer.listen(PORT, () => {
+  console.log(`🚀 GPS Backend + Socket.IO running at http://localhost:${PORT}`);
   console.log(`📋 Mobile Endpoints:`);
   console.log(`   POST /api/login`);
   console.log(`   GET  /api/profile?userId=1`);
   console.log(`   POST /api/update-location`);
   console.log(`   POST /api/update-profile`);
+  console.log(`   POST /api/save-fcm-token`);
   console.log(`📋 CAD Mobile Endpoints:`);
   console.log(`   GET  /api/cad/my-task?userId=1`);
   console.log(`   GET  /api/cad/task-detail?taskId=1`);
+  console.log(`   GET  /api/cad/stats?userId=1`);
   console.log(`   POST /api/cad/terima-task`);
   console.log(`   POST /api/cad/menuju`);
   console.log(`   POST /api/cad/tiba`);
@@ -190,5 +226,6 @@ app.listen(PORT, () => {
   console.log(`   POST /api/backoffice/create-task`);
   console.log(`   POST /api/backoffice/assign-task`);
   console.log(`   POST /api/backoffice/close-task`);
+  console.log(`🔌 Socket.IO aktif untuk realtime update`);
   console.log(`   GET  /health`);
 });
