@@ -1,26 +1,41 @@
 /**
- * firebase_admin.js — init Firebase Admin SDK
- * Taruh di root be-sm-mobile/, sejajar server.js
- *
- * Butuh: npm install firebase-admin
- *
- * Taruh file sm-mobile-djalu-firebase-adminsdk-fbsvc-xxx.json
- * di folder yang SAMA, lalu rename jadi: firebase-service-account.json
- * (atau sesuaikan path di bawah)
+ * firebase_admin.js
  */
 
-const admin = require('firebase-admin');
-const serviceAccount = require('./firebase-service-account.json');
+let admin;
+let messaging;
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+try {
+  // firebase-admin v12+ pakai named import
+  const firebaseAdmin = require('firebase-admin/app');
+  const firebaseMessaging = require('firebase-admin/messaging');
+  const serviceAccount = require('./firebase-service-account.json');
 
-/**
- * Kirim push notification ke 1 device via FCM token
- */
+  firebaseAdmin.initializeApp({
+    credential: firebaseAdmin.cert(serviceAccount),
+  });
+
+  admin = firebaseAdmin;
+  messaging = firebaseMessaging.getMessaging();
+  console.log('[FIREBASE] Initialized with v12+ API');
+} catch (e1) {
+  try {
+    // Fallback: firebase-admin v11 dan sebelumnya
+    const fb = require('firebase-admin');
+    const serviceAccount = require('./firebase-service-account.json');
+    fb.initializeApp({
+      credential: fb.credential.cert(serviceAccount),
+    });
+    admin = fb;
+    messaging = fb.messaging();
+    console.log('[FIREBASE] Initialized with legacy API');
+  } catch (e2) {
+    console.error('[FIREBASE] Init failed:', e2.message);
+  }
+}
+
 async function sendPushToToken(token, title, body, data = {}) {
-  if (!token) return null;
+  if (!token || !messaging) return null;
   try {
     const message = {
       token,
@@ -30,13 +45,10 @@ async function sendPushToToken(token, title, body, data = {}) {
       ),
       android: {
         priority: 'high',
-        notification: {
-          channelId: 'cad_channel',
-          sound: 'default',
-        },
+        notification: { channelId: 'cad_channel', sound: 'default' },
       },
     };
-    const res = await admin.messaging().send(message);
+    const res = await messaging.send(message);
     console.log('[FCM] Sent:', res);
     return res;
   } catch (e) {
@@ -45,12 +57,9 @@ async function sendPushToToken(token, title, body, data = {}) {
   }
 }
 
-/**
- * Kirim ke banyak token sekaligus (misal semua backoffice)
- */
 async function sendPushToMultiple(tokens, title, body, data = {}) {
   const valid = tokens.filter(Boolean);
-  if (valid.length === 0) return null;
+  if (valid.length === 0 || !messaging) return null;
   try {
     const message = {
       tokens: valid,
@@ -63,7 +72,7 @@ async function sendPushToMultiple(tokens, title, body, data = {}) {
         notification: { channelId: 'cad_channel', sound: 'default' },
       },
     };
-    const res = await admin.messaging().sendEachForMulticast(message);
+    const res = await messaging.sendEachForMulticast(message);
     console.log(`[FCM] Sent to ${res.successCount}/${valid.length}`);
     return res;
   } catch (e) {
@@ -72,4 +81,4 @@ async function sendPushToMultiple(tokens, title, body, data = {}) {
   }
 }
 
-module.exports = { admin, sendPushToToken, sendPushToMultiple };
+module.exports = { sendPushToToken, sendPushToMultiple };
