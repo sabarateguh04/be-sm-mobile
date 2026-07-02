@@ -1,7 +1,3 @@
-/**
- * firebase_admin.js
- */
-
 let admin;
 let messaging;
 
