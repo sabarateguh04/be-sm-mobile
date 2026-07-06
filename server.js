@@ -163,6 +163,20 @@ app.post('/api/save-fcm-token', async (req, res) => {
     return response(res, 400, { message: 'userId & fcmToken wajib' });
 
   try {
+    // 1 device (fcm_token) cuma boleh aktif untuk 1 akun dalam satu waktu.
+    // Kalau device ini sebelumnya kepakai user lain (mis. logout lalu login
+    // user baru tanpa uninstall), lepas dulu token itu dari baris lama —
+    // di kedua tabel, jaga-jaga kalau device pernah dipakai lintas role —
+    // supaya user lama tidak ikut kebagian notif dari device yang sama.
+    await pool.query(
+      `UPDATE tbl_petugas_mobile SET fcm_token = NULL WHERE fcm_token = ? AND user_id != ?`,
+      [fcmToken, userId],
+    );
+    await pool.query(
+      `UPDATE tbl_backoffice_user SET fcm_token = NULL WHERE fcm_token = ? AND user_id != ?`,
+      [fcmToken, userId],
+    );
+
     if (role === 'backoffice') {
       await pool.query(
         `UPDATE tbl_backoffice_user SET fcm_token = ? WHERE user_id = ?`,
