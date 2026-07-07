@@ -7,6 +7,7 @@ const pool    = require('./db');
 require('dotenv').config();
 
 const { initSocket, emitToBackoffice } = require('./socket');
+const { sendPushToMultiple } = require('./firebase_admin');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -301,6 +302,99 @@ app.use('/api/backoffice', backofficeRoute);
 app.get('/health', (_, res) => res.json({ status: 'ok', time: nowDatetime() }));
 
 /* ═══════════════════════════════════════
+   WATCHDOG — jalan tiap 1 menit
+   1) Petugas status ONLINE tapi udah ≥15 menit gak kirim update
+      lokasi (app ditutup paksa / device mati tanpa logout resmi,
+      jadi endpoint logout gak sempat kepanggil) → paksa jadi OFFLINE.
+   2) Petugas status BERTUGAS (masih ada task yg belum SELESAI)
+      DIBIARKAN — gak ikut auto-offline. Sebagai gantinya, kirim
+      reminder ke backoffice tiap 15 menit selama task itu belum kelar.
+
+   ⚠️ CATATAN PENTING: perbandingan waktu di sini pakai
+   TIMESTAMPDIFF(MINUTE, last_updated, NOW()) — artinya nilai
+   last_updated (dikirim dari HP petugas) HARUS di jam yang sama
+   dengan jam server MySQL kamu. Kalau HP kirim jam WIB tapi server
+   MySQL jalan di UTC (atau sebaliknya), auto-offline ini bisa gak
+   akurat (telat/gak pernah kepicu, atau kepicu instan). Kalau itu
+   terjadi, kabari saya jam device vs jam server-nya beda berapa jam.
+═══════════════════════════════════════ */
+const IDLE_OFFLINE_MINUTES  = 15;
+const TASK_REMINDER_MINUTES = 15;
+const taskReminderLastSent  = new Map(); // key: `${task_id}:${user_id}` → timestamp ms terakhir diingatkan
+
+async function runPetugasWatchdog() {
+  // 1) Auto-OFFLINE untuk petugas ONLINE yang diem >= 15 menit
+  try {
+    const [stale] = await pool.query(
+      `SELECT user_id, nama FROM tbl_petugas_mobile
+       WHERE status = 'ONLINE'
+         AND last_updated IS NOT NULL
+         AND TIMESTAMPDIFF(MINUTE, last_updated, NOW()) >= ?`,
+      [IDLE_OFFLINE_MINUTES],
+    );
+    for (const p of stale) {
+      await pool.query(`UPDATE tbl_petugas_mobile SET status = 'OFFLINE' WHERE user_id = ?`, [p.user_id]);
+      emitToBackoffice('petugas-location', { userId: p.user_id, status: 'OFFLINE' });
+      console.log(`[WATCHDOG] ${p.nama} (#${p.user_id}) auto-OFFLINE — idle ${IDLE_OFFLINE_MINUTES}+ menit`);
+    }
+  } catch (e) {
+    console.error('[WATCHDOG offline]', e.message);
+  }
+
+  // 2) Reminder buat task yang masih berjalan (petugas BERTUGAS, belum SELESAI)
+  try {
+    const [ongoing] = await pool.query(
+      `SELECT a.task_id, a.user_id, p.nama, t.title
+       FROM tbl_cad_assignment a
+       JOIN tbl_petugas_mobile p ON p.user_id = a.user_id
+       JOIN tbl_cad_task t       ON t.id = a.task_id
+       WHERE a.status IN ('DITERIMA','MENUJU','TIBA')`,
+    );
+
+    const activeKeys = new Set();
+    for (const row of ongoing) {
+      const key = `${row.task_id}:${row.user_id}`;
+      activeKeys.add(key);
+
+      if (!taskReminderLastSent.has(key)) {
+        // Baru ketauan lagi jalan — jangan langsung ngingetin, mulai hitung dari sekarang
+        taskReminderLastSent.set(key, Date.now());
+        continue;
+      }
+      const elapsedMin = (Date.now() - taskReminderLastSent.get(key)) / 60000;
+      if (elapsedMin < TASK_REMINDER_MINUTES) continue;
+
+      taskReminderLastSent.set(key, Date.now());
+      const message = `${row.nama} masih menangani "${row.title}" — belum selesai.`;
+
+      emitToBackoffice('task-reminder', {
+        taskId: row.task_id, userId: row.user_id, nama: row.nama, title: row.title, message,
+      });
+
+      try {
+        const [boRows] = await pool.query(`SELECT fcm_token FROM tbl_backoffice_user WHERE fcm_token IS NOT NULL`);
+        const tokens = boRows.map(r => r.fcm_token).filter(Boolean);
+        if (tokens.length > 0) {
+          await sendPushToMultiple(tokens, 'Tugas Belum Selesai', message, {
+            type: 'task_reminder', taskId: String(row.task_id),
+          });
+        }
+      } catch (pushErr) {
+        console.error('[WATCHDOG push]', pushErr.message);
+      }
+    }
+
+    // Buang key yang task-nya udah kelar/gak aktif lagi, biar Map gak numpuk terus
+    for (const key of taskReminderLastSent.keys()) {
+      if (!activeKeys.has(key)) taskReminderLastSent.delete(key);
+    }
+  } catch (e) {
+    console.error('[WATCHDOG reminder]', e.message);
+  }
+}
+setInterval(runPetugasWatchdog, 60 * 1000);
+
+/* ═══════════════════════════════════════
    HTTP SERVER + SOCKET.IO
 ═══════════════════════════════════════ */
 const httpServer = http.createServer(app);
@@ -329,11 +423,13 @@ httpServer.listen(PORT, () => {
   console.log(`📋 Backoffice Endpoints:`);
   console.log(`   GET  /api/backoffice/dashboard`);
   console.log(`   GET  /api/backoffice/list-petugas`);
+  console.log(`   GET  /api/backoffice/map-data`);
   console.log(`   GET  /api/backoffice/all-task`);
   console.log(`   GET  /api/backoffice/task-detail?taskId=1`);
   console.log(`   POST /api/backoffice/create-task`);
   console.log(`   POST /api/backoffice/assign-task`);
   console.log(`   POST /api/backoffice/close-task`);
   console.log(`🔌 Socket.IO aktif untuk realtime update`);
+  console.log(`🐕 Watchdog aktif: auto-offline (${IDLE_OFFLINE_MINUTES} menit idle) + reminder task berjalan (tiap ${TASK_REMINDER_MINUTES} menit)`);
   console.log(`   GET  /health`);
 });

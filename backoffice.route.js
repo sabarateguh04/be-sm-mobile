@@ -44,6 +44,38 @@ router.get('/list-petugas', async (req, res) => {
 });
 
 /* ═══════════════════════════════════════════════════
+   1b. GET /api/backoffice/map-data
+   Data buat halaman Pemantauan: titik laporan (task aktif)
+   + siapa aja petugas yang lagi diterima/otw/di TKP suatu task
+   (dipakai buat gambar jalur tracking di peta)
+═══════════════════════════════════════════════════ */
+router.get('/map-data', async (req, res) => {
+  try {
+    const [tasks] = await pool.query(
+      `SELECT id, title, address, latitude, longitude, priority, status, created_at
+       FROM tbl_cad_task
+       WHERE status NOT IN ('CLOSED')
+         AND latitude IS NOT NULL AND longitude IS NOT NULL
+         AND latitude != 0 AND longitude != 0
+       ORDER BY FIELD(priority,'HIGH','MEDIUM','LOW'), created_at DESC`
+    );
+
+    const [assignments] = await pool.query(
+      `SELECT a.task_id, a.user_id, a.status AS asgn_status,
+              p.nama, p.lat, p.lng, p.status AS petugas_status
+       FROM tbl_cad_assignment a
+       JOIN tbl_petugas_mobile p ON p.user_id = a.user_id
+       WHERE a.status IN ('DITERIMA','MENUJU','TIBA')`
+    );
+
+    return ok(res, { tasks, assignments });
+  } catch (e) {
+    console.error('[BACKOFFICE map-data]', e.message);
+    return err(res, 'Server error');
+  }
+});
+
+/* ═══════════════════════════════════════════════════
    2. POST /api/backoffice/create-task
    Body: {
      title, address, latitude, longitude,

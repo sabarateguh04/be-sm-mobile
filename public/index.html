@@ -362,9 +362,10 @@
               <span class="legend-dot" style="background:#2ea043;"></span> Online
               <span class="legend-dot" style="background:#e6c200;"></span> Bertugas
               <span class="legend-dot" style="background:#da3633;"></span> Offline
+              <span style="margin-left:14px;">🚩</span> Laporan
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <input id="monitor-search" placeholder="Cari nama petugas..." style="width:180px;"
+              <input id="monitor-search" placeholder="Cari nama petugas..." style="width:170px;"
                 oninput="filterMonitorMarkers()">
               <select id="monitor-filter" onchange="filterMonitorMarkers()">
                 <option value="">Semua Status</option>
@@ -372,6 +373,9 @@
                 <option value="BERTUGAS">Bertugas</option>
                 <option value="OFFLINE">Offline</option>
               </select>
+              <label class="chip-check"><input type="checkbox" id="layer-petugas" checked onchange="applyLayerToggles()"> Petugas</label>
+              <label class="chip-check"><input type="checkbox" id="layer-tasks" checked onchange="applyLayerToggles()"> Laporan</label>
+              <label class="chip-check"><input type="checkbox" id="layer-tracking" checked onchange="applyLayerToggles()"> Tracking</label>
               <span id="monitor-count" class="muted-note" style="margin:0;">Memuat...</span>
               <button class="btn secondary sm" onclick="refreshMonitorMarkers()">↻ Refresh</button>
             </div>
@@ -623,6 +627,16 @@ function connectSocket(){
       type: 'new_task',
       title: 'Tugas Baru Dibuat',
       body: `${data.title || 'CAD #' + data.taskId} — ${data.address || ''}`,
+      taskId: data.taskId,
+    });
+  });
+
+  // Reminder dari watchdog server: task masih berjalan, petugas belum selesai
+  socket.on('task-reminder', (data) => {
+    pushNotif({
+      type: 'reminder',
+      title: 'Tugas Belum Selesai',
+      body: data.message || `${data.nama} masih menangani tugas ini.`,
       taskId: data.taskId,
     });
   });
@@ -972,9 +986,12 @@ async function loadPetugas(){
 }
 
 /* ══════════════════════════ PEMANTAUAN (PETA) ══════════════════════════ */
-let monitorMap = null;
-let monitorMarkers = {}; // user_id (string) -> google.maps.Marker
-let monitorInterval = null;
+let monitorMap        = null;
+let monitorMarkers    = {};  // user_id (string) -> google.maps.Marker (petugas)
+let monitorTaskMarkers = {}; // task_id (string) -> google.maps.Marker (titik laporan)
+let monitorTrackLines  = {}; // "taskId:userId" -> google.maps.Polyline (jalur tracking)
+let monitorInterval    = null;
+let monitorAnimTimer   = null;
 
 async function initMonitorMap(){
   await ensureGoogleMaps();
@@ -984,7 +1001,16 @@ async function initMonitorMap(){
     monitorMap = new google.maps.Map(mapEl, {
       center: { lat: -2.5, lng: 118 }, zoom: 5,
       mapTypeControl: false, streetViewControl: false, fullscreenControl: true,
+      styles: [{ featureType:'poi', elementType:'labels', stylers:[{ visibility:'off' }] }],
     });
+    // Animasikan anak panah di jalur tracking biar keliatan "jalan" menuju TKP
+    monitorAnimTimer = setInterval(() => {
+      Object.values(monitorTrackLines).forEach(line => {
+        const icons = line.get('icons');
+        icons[0].offset = ((parseFloat(icons[0].offset) + 2) % 100) + '%';
+        line.set('icons', icons);
+      });
+    }, 120);
   } else {
     google.maps.event.trigger(monitorMap, 'resize');
   }
@@ -993,23 +1019,50 @@ async function initMonitorMap(){
 
 async function refreshMonitorMarkers(){
   try{
-    const list = await loadPetugasCache();
-    let hasAny = false;
-    list.forEach(p => { upsertMonitorMarker(p); if(parseFloat(p.lat) && parseFloat(p.lng)) hasAny = true; });
+    const [petugasList, mapData] = await Promise.all([
+      loadPetugasCache(),
+      api('/api/backoffice/map-data'),
+    ]);
 
-    // Hapus marker petugas yang sudah tidak ada di daftar (mis. dinonaktifkan)
-    const activeIds = new Set(list.map(p => String(p.user_id)));
+    // ── Petugas ──
+    let hasAny = false;
+    petugasList.forEach(p => { upsertMonitorMarker(p); if(parseFloat(p.lat) && parseFloat(p.lng)) hasAny = true; });
+    const activePetugasIds = new Set(petugasList.map(p => String(p.user_id)));
     Object.keys(monitorMarkers).forEach(id => {
-      if(!activeIds.has(id)){ monitorMarkers[id].setMap(null); delete monitorMarkers[id]; }
+      if(!activePetugasIds.has(id)){ monitorMarkers[id].setMap(null); delete monitorMarkers[id]; }
     });
 
-    document.getElementById('monitor-count').textContent = `${list.length} petugas terdaftar`;
-    filterMonitorMarkers(); // terapkan ulang filter status/pencarian yang lagi aktif
+    // ── Titik laporan (task aktif) ──
+    const tasks = mapData?.tasks || [];
+    tasks.forEach(t => { upsertTaskMarker(t); if(parseFloat(t.latitude) && parseFloat(t.longitude)) hasAny = true; });
+    const activeTaskIds = new Set(tasks.map(t => String(t.id)));
+    Object.keys(monitorTaskMarkers).forEach(id => {
+      if(!activeTaskIds.has(id)){ monitorTaskMarkers[id].setMap(null); delete monitorTaskMarkers[id]; }
+    });
 
-    // Auto-fit peta ke semua marker yang punya lokasi, sekali saat pertama render
+    // ── Jalur tracking: petugas yang lagi DITERIMA/MENUJU/TIBA ke suatu task ──
+    const assignments = (mapData?.assignments || []).filter(a => parseFloat(a.lat) && parseFloat(a.lng));
+    const activeTrackKeys = new Set();
+    assignments.forEach(a => {
+      const task = tasks.find(t => String(t.id) === String(a.task_id));
+      if(!task || !parseFloat(task.latitude) || !parseFloat(task.longitude)) return;
+      const key = `${a.task_id}:${a.user_id}`;
+      activeTrackKeys.add(key);
+      upsertTrackLine(key, a, task);
+    });
+    Object.keys(monitorTrackLines).forEach(key => {
+      if(!activeTrackKeys.has(key)){ monitorTrackLines[key].setMap(null); delete monitorTrackLines[key]; }
+    });
+
+    document.getElementById('monitor-count').textContent =
+      `${petugasList.length} petugas · ${tasks.length} laporan aktif`;
+    applyLayerToggles();
+    filterMonitorMarkers();
+
     if(hasAny && !monitorMap.__fitted){
       const bounds = new google.maps.LatLngBounds();
       Object.values(monitorMarkers).forEach(m => bounds.extend(m.getPosition()));
+      Object.values(monitorTaskMarkers).forEach(m => bounds.extend(m.getPosition()));
       monitorMap.fitBounds(bounds);
       monitorMap.__fitted = true;
     }
@@ -1029,7 +1082,7 @@ function upsertMonitorMarker(p){
     monitorMarkers[id].infoWindowRef.setContent(monitorInfoHtml(p));
   } else {
     const marker = new google.maps.Marker({
-      position: pos, map: monitorMap, title: p.nama, icon: markerIcon(p.status),
+      position: pos, map: monitorMap, title: p.nama, icon: markerIcon(p.status), zIndex: 10,
     });
     const info = new google.maps.InfoWindow({ content: monitorInfoHtml(p) });
     marker.addListener('click', () => info.open(monitorMap, marker));
@@ -1039,25 +1092,82 @@ function upsertMonitorMarker(p){
   }
 }
 
+function upsertTaskMarker(t){
+  const lat = parseFloat(t.latitude), lng = parseFloat(t.longitude);
+  if(!lat && !lng) return;
+  const pos = { lat, lng };
+  const id  = String(t.id);
+
+  if(monitorTaskMarkers[id]){
+    monitorTaskMarkers[id].setPosition(pos);
+    monitorTaskMarkers[id].taskData = t;
+    monitorTaskMarkers[id].infoWindowRef.setContent(taskInfoHtml(t));
+  } else {
+    const marker = new google.maps.Marker({
+      position: pos, map: monitorMap, title: t.title, icon: taskMarkerIcon(t.priority), zIndex: 5,
+    });
+    const info = new google.maps.InfoWindow({ content: taskInfoHtml(t) });
+    marker.addListener('click', () => info.open(monitorMap, marker));
+    marker.infoWindowRef = info;
+    marker.taskData = t;
+    monitorTaskMarkers[id] = marker;
+  }
+}
+
+function upsertTrackLine(key, assignment, task){
+  const path = [
+    { lat: parseFloat(assignment.lat), lng: parseFloat(assignment.lng) },
+    { lat: parseFloat(task.latitude), lng: parseFloat(task.longitude) },
+  ];
+  if(monitorTrackLines[key]){
+    monitorTrackLines[key].setPath(path);
+  } else {
+    const arrowIcon = {
+      icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 3, strokeColor: '#2196F3' },
+      offset: '0%', repeat: '80px',
+    };
+    monitorTrackLines[key] = new google.maps.Polyline({
+      path, map: monitorMap,
+      strokeColor: '#2196F3', strokeOpacity: 0.55, strokeWeight: 3,
+      icons: [arrowIcon],
+      zIndex: 3,
+    });
+  }
+}
+
 /* Filter berdasarkan status (dropdown) + pencarian nama (input) */
 function filterMonitorMarkers(){
   if(!monitorMap) return;
   const status = document.getElementById('monitor-filter').value;
   const search = document.getElementById('monitor-search').value.trim().toLowerCase();
+  const showPetugas = document.getElementById('layer-petugas').checked;
 
   let visibleCount = 0;
   Object.values(monitorMarkers).forEach(m => {
     const p = m.petugasData || {};
     const matchStatus = !status || p.status === status;
     const matchSearch  = !search || (p.nama || '').toLowerCase().includes(search);
-    const visible = matchStatus && matchSearch;
+    const visible = showPetugas && matchStatus && matchSearch;
     m.setMap(visible ? monitorMap : null);
     if(visible) visibleCount++;
   });
 
   const total = Object.keys(monitorMarkers).length;
+  const taskCount = Object.keys(monitorTaskMarkers).length;
   document.getElementById('monitor-count').textContent =
-    (status || search) ? `${visibleCount} dari ${total} petugas` : `${total} petugas terdaftar`;
+    (status || search) ? `${visibleCount} dari ${total} petugas · ${taskCount} laporan` : `${total} petugas · ${taskCount} laporan aktif`;
+}
+
+/* Toggle layer: petugas / titik laporan / jalur tracking */
+function applyLayerToggles(){
+  const showPetugas  = document.getElementById('layer-petugas').checked;
+  const showTasks    = document.getElementById('layer-tasks').checked;
+  const showTracking = document.getElementById('layer-tracking').checked;
+
+  Object.values(monitorTaskMarkers).forEach(m => m.setMap(showTasks ? monitorMap : null));
+  Object.values(monitorTrackLines).forEach(l => l.setMap(showTracking ? monitorMap : null));
+  filterMonitorMarkers(); // urusan petugas ditangani di sini (gabung sama status/search)
+  if(!showPetugas) Object.values(monitorMarkers).forEach(m => m.setMap(null));
 }
 
 function markerIcon(status){
@@ -1072,11 +1182,31 @@ function markerIcon(status){
     anchor: new google.maps.Point(15, 36),
   };
 }
+function taskMarkerIcon(priority){
+  const color = { HIGH: '#da3633', MEDIUM: '#e6c200', LOW: '#2196F3' }[priority] || '#2196F3';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="32" viewBox="0 0 26 32">
+    <path d="M4 0 V32 M4 2 H22 L17 8 L22 14 H4" fill="none" stroke="${color}" stroke-width="3" stroke-linejoin="round"/>
+    <path d="M4 2 H22 L17 8 L22 14 H4 Z" fill="${color}"/>
+  </svg>`;
+  return {
+    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(26, 32),
+    anchor: new google.maps.Point(4, 32),
+  };
+}
 function monitorInfoHtml(p){
   return `<div style="font-family:sans-serif;font-size:12.5px;color:#111;min-width:140px;">
     <b>${escapeHtml(p.nama)}</b><br>
     Status: ${p.status || '-'}<br>
     Update: ${formatWIB(p.last_updated)}
+  </div>`;
+}
+function taskInfoHtml(t){
+  return `<div style="font-family:sans-serif;font-size:12.5px;color:#111;min-width:170px;">
+    <b>${escapeHtml(t.title)}</b><br>
+    ${escapeHtml(t.address || '')}<br>
+    Prioritas: ${t.priority || '-'} · Status: ${t.status || '-'}<br>
+    <a href="javascript:void(0)" onclick="goPage('tasks');openTaskDetail(${t.id})">Lihat detail →</a>
   </div>`;
 }
 let createTaskMap = null;
