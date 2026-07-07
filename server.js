@@ -15,6 +15,9 @@ app.use(express.json());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// Dashboard SM Dispatcher (web backoffice) — taruh file di folder /public
+app.use(express.static(path.join(__dirname, 'public')));
+
 /* ═══════════════════════════════════════
    HELPER
 ═══════════════════════════════════════ */
@@ -158,7 +161,7 @@ app.post('/api/update-profile', async (req, res) => {
    body: { userId, fcmToken, role }  → role: 'petugas' | 'backoffice'
 ═══════════════════════════════════════ */
 app.post('/api/save-fcm-token', async (req, res) => {
-  const { userId, fcmToken, role = 'petugas' } = req.body;
+  const { userId, fcmToken, role = 'petugas', nama } = req.body;
   if (!userId || !fcmToken)
     return response(res, 400, { message: 'userId & fcmToken wajib' });
 
@@ -178,9 +181,20 @@ app.post('/api/save-fcm-token', async (req, res) => {
     );
 
     if (role === 'backoffice') {
+      // Dashboard SM Dispatcher belum punya sistem login/registrasi resmi,
+      // jadi baris user_id backoffice mungkin belum ada sama sekali di
+      // tabel. Pakai upsert supaya baris otomatis dibuat kalau belum ada,
+      // bukan cuma diam-diam gagal ke-update 0 baris.
+      // ⚠️ NOTE: kalau tbl_backoffice_user punya kolom lain yang wajib diisi
+      // (NOT NULL tanpa default, mis. username/password), INSERT ini akan
+      // gagal — kabari saya struktur tabelnya kalau itu terjadi.
       await pool.query(
-        `UPDATE tbl_backoffice_user SET fcm_token = ? WHERE user_id = ?`,
-        [fcmToken, userId],
+        `INSERT INTO tbl_backoffice_user (user_id, nama, fcm_token)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           fcm_token = VALUES(fcm_token),
+           nama = COALESCE(VALUES(nama), nama)`,
+        [userId, nama || null, fcmToken],
       );
     } else {
       await pool.query(
