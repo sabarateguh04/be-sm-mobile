@@ -6,7 +6,7 @@ const bcrypt  = require('bcryptjs');
 const pool    = require('./db');
 require('dotenv').config();
 
-const { initSocket } = require('./socket');
+const { initSocket, emitToBackoffice } = require('./socket');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -205,6 +205,10 @@ app.post('/api/update-location', async (req, res) => {
       [lat, lng, status, datetime, userId]
     );
 
+    // Broadcast ke semua backoffice yang lagi buka halaman Pemantauan,
+    // supaya pin di peta gerak realtime tanpa nunggu polling.
+    emitToBackoffice('petugas-location', { userId, lat, lng, status, last_updated: datetime });
+
     return response(res, 200, { ket: 'data berhasil di update' });
   } catch (e) {
     console.error('[UPDATE-LOCATION]', e.message);
@@ -226,6 +230,8 @@ app.post('/api/update-profile', async (req, res) => {
       `UPDATE tbl_petugas_mobile SET lat = ?, lng = ?, status = ?, last_updated = ? WHERE user_id = ?`,
       [lat, lng, status, last_updated, userId]
     );
+
+    emitToBackoffice('petugas-location', { userId, lat, lng, status, last_updated });
 
     return response(res, 200, { ket: 'data berhasil di update' });
   } catch (e) {

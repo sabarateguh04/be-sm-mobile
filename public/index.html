@@ -100,6 +100,9 @@
   .pill.OFFLINE{background:rgba(139,148,158,.15);color:var(--muted);}
 
   .toolbar{display:flex;gap:10px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap;}
+  .monitor-legend{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);}
+  .legend-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-left:8px;}
+  .legend-dot:first-child{margin-left:0;}
   select,input,textarea{background:var(--navy2);border:1px solid var(--border);border-radius:8px;color:var(--text);
     font-size:12px;font-family:var(--font);padding:7px 10px;outline:none;}
   select:focus,input:focus,textarea:focus{border-color:var(--accent);}
@@ -164,6 +167,10 @@
   .np-list{flex:1;overflow-y:auto;padding:10px;}
   .np-item{background:var(--navy2);border:1px solid var(--border);border-radius:10px;padding:11px 12px;margin-bottom:8px;
     position:relative;}
+  .np-item.has-task{cursor:pointer;}
+  .np-item.has-task:hover{border-color:var(--accent);}
+  .np-taskid{display:inline-block;background:var(--primary);color:#fff;font-size:9.5px;font-weight:700;
+    padding:1px 6px;border-radius:8px;margin-left:2px;}
   .np-item.unread{border-color:rgba(33,150,243,.5);}
   .np-item .t{font-size:12.5px;font-weight:700;margin-bottom:2px;padding-right:14px;}
   .np-item .b{font-size:11.5px;color:#c7d0db;line-height:1.4;}
@@ -275,6 +282,7 @@
       <button class="nav-btn active" data-page="dashboard" onclick="goPage('dashboard')"><span class="ic">📊</span> Dashboard</button>
       <button class="nav-btn" data-page="tasks" onclick="goPage('tasks')"><span class="ic">📋</span> Semua Tugas</button>
       <button class="nav-btn" data-page="petugas" onclick="goPage('petugas')"><span class="ic">👮</span> Petugas</button>
+      <button class="nav-btn" data-page="monitor" onclick="goPage('monitor')"><span class="ic">🗺️</span> Pemantauan</button>
       <button class="nav-btn" data-page="create" onclick="goPage('create')"><span class="ic">➕</span> Buat Tugas</button>
     </nav>
     <div class="sidebar-foot">
@@ -346,12 +354,34 @@
         </div>
       </div>
 
+      <!-- PAGE: MONITOR -->
+      <div class="page" id="page-monitor">
+        <div class="card">
+          <div class="toolbar" style="justify-content:space-between;">
+            <div class="monitor-legend">
+              <span class="legend-dot" style="background:#2ea043;"></span> Online
+              <span class="legend-dot" style="background:#e3952a;"></span> Bertugas
+              <span class="legend-dot" style="background:#8B949E;"></span> Offline
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span id="monitor-count" class="muted-note" style="margin:0;">Memuat...</span>
+              <button class="btn secondary sm" onclick="refreshMonitorMarkers()">↻ Refresh</button>
+            </div>
+          </div>
+          <div id="monitor-map" style="height:70vh;border-radius:10px;border:1px solid var(--border);margin-top:12px;"></div>
+        </div>
+      </div>
+
       <!-- PAGE: CREATE TASK -->
       <div class="page" id="page-create">
         <div class="card">
           <div class="form-grid">
             <div class="field full"><label>Judul Laporan *</label><input id="c-title" placeholder="Laporan Kecelakaan"></div>
-            <div class="field full"><label>Alamat *</label><input id="c-address" placeholder="Jl. Sudirman No.10"></div>
+            <div class="field full"><label>Alamat *</label><input id="c-address" placeholder="Jl. Sudirman No.10 (ketik untuk cari di peta)"></div>
+            <div class="field full">
+              <label>Titik Lokasi (klik peta / drag pin untuk pilih)</label>
+              <div id="c-map" style="height:280px;border-radius:10px;border:1px solid var(--border);"></div>
+            </div>
             <div class="field"><label>Latitude</label><input id="c-lat" placeholder="-6.200000"></div>
             <div class="field"><label>Longitude</label><input id="c-lng" placeholder="106.816666"></div>
             <div class="field"><label>Prioritas</label>
@@ -588,6 +618,20 @@ function connectSocket(){
       taskId: data.taskId,
     });
   });
+
+  // Petugas kirim update lokasi GPS — dipakai buat gerakin pin di halaman Pemantauan
+  socket.on('petugas-location', (data) => {
+    const cached = petugasCache.find(p => p.user_id == data.userId);
+    if(cached){ cached.lat = data.lat; cached.lng = data.lng; cached.status = data.status; cached.last_updated = data.last_updated; }
+    if(monitorMap){
+      upsertMonitorMarker({
+        user_id: data.userId,
+        nama: cached ? cached.nama : ('Petugas #' + data.userId),
+        lat: data.lat, lng: data.lng,
+        status: data.status, last_updated: data.last_updated,
+      });
+    }
+  });
 }
 
 function setConnStatus(on){
@@ -638,13 +682,22 @@ function renderNotifPanel(){
     return;
   }
   wrap.innerHTML = list.map(n => `
-    <div class="np-item ${n.read?'':'unread'}" onclick="markRead('${n.id}')">
+    <div class="np-item ${n.read?'':'unread'} ${n.taskId ? 'has-task' : ''}" onclick="handleNotifClick('${n.id}', ${n.taskId ? Number(n.taskId) : 'null'})">
       ${n.read ? '' : '<span class="dot2"></span>'}
-      <div class="t">${n.title}</div>
+      <div class="t">${n.title}${n.taskId ? ` <span class="np-taskid">#${n.taskId}</span>` : ''}</div>
       <div class="b">${n.body}</div>
-      <div class="ts">${relTime(n.time)}</div>
+      <div class="ts">${formatWIB(n.time)} · ${relTime(n.time)}</div>
     </div>
   `).join('');
+}
+
+function handleNotifClick(id, taskId){
+  markRead(id);
+  if(taskId){
+    toggleNotifPanel(false);
+    goPage('tasks');
+    openTaskDetail(taskId);
+  }
 }
 
 function markRead(id){
@@ -697,13 +750,22 @@ function goPage(name){
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('page-' + name).classList.add('active');
   document.querySelector(`.nav-btn[data-page="${name}"]`).classList.add('active');
-  const titles = { dashboard:'Dashboard', tasks:'Semua Tugas', petugas:'Petugas', create:'Buat Tugas Baru' };
+  const titles = { dashboard:'Dashboard', tasks:'Semua Tugas', petugas:'Petugas', monitor:'Pemantauan Petugas', create:'Buat Tugas Baru' };
   document.getElementById('page-title').textContent = titles[name];
 
   if(name === 'dashboard') loadDashboard();
   if(name === 'tasks')     loadTasks(1);
   if(name === 'petugas')   loadPetugas();
-  if(name === 'create')    loadChecklist();
+  if(name === 'create')  { loadChecklist(); initCreateTaskMap(); }
+
+  if(name === 'monitor'){
+    initMonitorMap();
+    if(monitorInterval) clearInterval(monitorInterval);
+    monitorInterval = setInterval(refreshMonitorMarkers, 20000); // fallback polling tiap 20 detik
+  } else if(monitorInterval){
+    clearInterval(monitorInterval);
+    monitorInterval = null;
+  }
 }
 
 /* ══════════════════════════ API HELPERS ══════════════════════════ */
@@ -743,7 +805,7 @@ async function loadDashboard(){
       <tr class="clickable" onclick="openTaskDetail(${u.id})">
         <td>#${u.id}</td><td>${escapeHtml(u.title)}</td><td>${escapeHtml(u.address)}</td>
         <td><span class="pill ${u.status}">${u.status}</span></td>
-        <td>${u.created_at || '-'}</td>
+        <td>${formatWIB(u.created_at)}</td>
       </tr>`).join('') : '<tr class="empty-row"><td colspan="5">Tidak ada tugas HIGH priority yang terbuka 🎉</td></tr>';
   }catch(e){ console.error(e); }
 }
@@ -771,7 +833,7 @@ async function loadTasks(page){
         <td><span class="pill ${t.priority}">${t.priority}</span></td>
         <td><span class="pill ${t.status}">${t.status}</span></td>
         <td>${t.total_selesai||0}/${t.total_assigned||0} selesai</td>
-        <td>${t.created_at || '-'}</td>
+        <td>${formatWIB(t.created_at)}</td>
       </tr>`).join('') : '<tr class="empty-row"><td colspan="7">Tidak ada tugas</td></tr>';
 
     document.getElementById('task-pageinfo').textContent = `Halaman ${taskPage} / ${taskTotalPages} (${d.pagination?.total||0} tugas)`;
@@ -799,7 +861,7 @@ async function openTaskDetail(taskId){
         <div><div class="k">Prioritas</div><div class="v"><span class="pill ${t.priority}">${t.priority}</span></div></div>
         <div><div class="k">Status</div><div class="v"><span class="pill ${t.status}">${t.status}</span></div></div>
         <div><div class="k">Pelapor</div><div class="v">${escapeHtml(t.pelapor||'-')}</div></div>
-        <div><div class="k">Dibuat</div><div class="v">${t.created_at||'-'}</div></div>
+        <div><div class="k">Dibuat</div><div class="v">${formatWIB(t.created_at)}</div></div>
         <div><div class="k">Keterangan</div><div class="v">${escapeHtml(t.keterangan||'-')}</div></div>
       </div>
       <div class="section-title" style="margin-top:0">Progress Petugas</div>
@@ -894,13 +956,155 @@ async function loadPetugas(){
     document.getElementById('petugas-body').innerHTML = petugasCache.length ? petugasCache.map(p => `
       <tr><td>#${p.user_id}</td><td>${escapeHtml(p.nama)}</td>
       <td><span class="pill ${p.status}">${p.status}</span></td>
-      <td>${p.last_updated || '-'}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">Tidak ada petugas</td></tr>';
+      <td>${formatWIB(p.last_updated)}</td></tr>`).join('') : '<tr class="empty-row"><td colspan="4">Tidak ada petugas</td></tr>';
   }catch(e){
     document.getElementById('petugas-body').innerHTML = `<tr class="empty-row"><td colspan="4">Gagal memuat: ${e.message}</td></tr>`;
   }
 }
 
-/* ══════════════════════════ CREATE TASK ══════════════════════════ */
+/* ══════════════════════════ PEMANTAUAN (PETA) ══════════════════════════ */
+let monitorMap = null;
+let monitorMarkers = {}; // user_id (string) -> google.maps.Marker
+let monitorInterval = null;
+
+async function initMonitorMap(){
+  await ensureGoogleMaps();
+  const mapEl = document.getElementById('monitor-map');
+  if(!mapEl) return;
+  if(!monitorMap){
+    monitorMap = new google.maps.Map(mapEl, {
+      center: { lat: -2.5, lng: 118 }, zoom: 5,
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: true,
+    });
+  } else {
+    google.maps.event.trigger(monitorMap, 'resize');
+  }
+  await refreshMonitorMarkers();
+}
+
+async function refreshMonitorMarkers(){
+  try{
+    const list = await loadPetugasCache();
+    let hasAny = false;
+    list.forEach(p => { upsertMonitorMarker(p); if(parseFloat(p.lat) && parseFloat(p.lng)) hasAny = true; });
+
+    // Hapus marker petugas yang sudah tidak ada di daftar (mis. dinonaktifkan)
+    const activeIds = new Set(list.map(p => String(p.user_id)));
+    Object.keys(monitorMarkers).forEach(id => {
+      if(!activeIds.has(id)){ monitorMarkers[id].setMap(null); delete monitorMarkers[id]; }
+    });
+
+    document.getElementById('monitor-count').textContent = `${list.length} petugas terdaftar`;
+
+    // Auto-fit peta ke semua marker yang punya lokasi, sekali saat pertama render
+    if(hasAny && !monitorMap.__fitted){
+      const bounds = new google.maps.LatLngBounds();
+      Object.values(monitorMarkers).forEach(m => bounds.extend(m.getPosition()));
+      monitorMap.fitBounds(bounds);
+      monitorMap.__fitted = true;
+    }
+  }catch(e){ console.error('[MONITOR]', e); }
+}
+
+function upsertMonitorMarker(p){
+  const lat = parseFloat(p.lat), lng = parseFloat(p.lng);
+  if(!lat && !lng) return; // petugas belum pernah kirim lokasi sama sekali
+  const pos = { lat, lng };
+  const id  = String(p.user_id);
+
+  if(monitorMarkers[id]){
+    monitorMarkers[id].setPosition(pos);
+    monitorMarkers[id].set('icon', markerIcon(p.status));
+    monitorMarkers[id].infoWindowRef.setContent(monitorInfoHtml(p));
+  } else {
+    const marker = new google.maps.Marker({
+      position: pos, map: monitorMap, title: p.nama, icon: markerIcon(p.status),
+    });
+    const info = new google.maps.InfoWindow({ content: monitorInfoHtml(p) });
+    marker.addListener('click', () => info.open(monitorMap, marker));
+    marker.infoWindowRef = info;
+    monitorMarkers[id] = marker;
+  }
+}
+
+function markerIcon(status){
+  return {
+    path: google.maps.SymbolPath.CIRCLE, scale: 8,
+    fillColor: statusColor(status), fillOpacity: 1,
+    strokeColor: '#fff', strokeWeight: 2,
+  };
+}
+function monitorInfoHtml(p){
+  return `<div style="font-family:sans-serif;font-size:12.5px;color:#111;min-width:140px;">
+    <b>${escapeHtml(p.nama)}</b><br>
+    Status: ${p.status || '-'}<br>
+    Update: ${formatWIB(p.last_updated)}
+  </div>`;
+}
+let createTaskMap = null;
+let createTaskMarker = null;
+
+async function initCreateTaskMap(){
+  await ensureGoogleMaps();
+  const mapEl = document.getElementById('c-map');
+  if(!mapEl) return;
+
+  if(!createTaskMap){
+    // Default center: Depok/Jakarta area — geser/klik peta buat ganti titiknya
+    const center = { lat: -6.400, lng: 106.818 };
+    createTaskMap = new google.maps.Map(mapEl, {
+      center, zoom: 12,
+      mapTypeControl: false, streetViewControl: false, fullscreenControl: true,
+    });
+    createTaskMarker = new google.maps.Marker({
+      position: center, map: createTaskMap, draggable: true,
+    });
+    createTaskMarker.addListener('dragend', syncLatLngFromMarker);
+    createTaskMap.addListener('click', (e) => {
+      createTaskMarker.setPosition(e.latLng);
+      syncLatLngFromMarker();
+    });
+
+    // Search box: ketik alamat di field #c-address, peta ikut geser ke sana
+    const addressInput = document.getElementById('c-address');
+    const searchBox = new google.maps.places.SearchBox(addressInput);
+    createTaskMap.addListener('bounds_changed', () => searchBox.setBounds(createTaskMap.getBounds()));
+    searchBox.addListener('places_changed', () => {
+      const places = searchBox.getPlaces();
+      if(!places || places.length === 0 || !places[0].geometry) return;
+      const loc = places[0].geometry.location;
+      createTaskMap.setCenter(loc);
+      createTaskMap.setZoom(16);
+      createTaskMarker.setPosition(loc);
+      syncLatLngFromMarker();
+    });
+
+    // Kalau lat/lng diisi manual, pin ikut pindah
+    ['c-lat','c-lng'].forEach(id => {
+      document.getElementById(id).addEventListener('change', () => {
+        const lat = Number(document.getElementById('c-lat').value);
+        const lng = Number(document.getElementById('c-lng').value);
+        if(!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)){
+          const pos = new google.maps.LatLng(lat, lng);
+          createTaskMarker.setPosition(pos);
+          createTaskMap.panTo(pos);
+        }
+      });
+    });
+
+    syncLatLngFromMarker(); // isi lat/lng default begitu peta pertama kali muncul
+  } else {
+    // Peta sudah pernah di-init sebelumnya — cuma perlu resize kalau balik ke tab ini
+    google.maps.event.trigger(createTaskMap, 'resize');
+  }
+}
+
+function syncLatLngFromMarker(){
+  const pos = createTaskMarker.getPosition();
+  document.getElementById('c-lat').value = pos.lat().toFixed(6);
+  document.getElementById('c-lng').value = pos.lng().toFixed(6);
+}
+
 async function loadChecklist(){
   if(petugasCache.length === 0) await loadPetugasCache();
   const el = document.getElementById('c-checklist');
@@ -993,10 +1197,43 @@ function loadScript(src){
   });
 }
 
+/* ══════════════════════════ GOOGLE MAPS ══════════════════════════ */
+const GOOGLE_MAPS_API_KEY = 'AIzaSyBsPfZeUe8Jm5Shr3ToevC39SyzO8lAPvE';
+let googleMapsLoadingPromise = null;
+function ensureGoogleMaps(){
+  if(window.google && window.google.maps) return Promise.resolve();
+  if(!googleMapsLoadingPromise){
+    googleMapsLoadingPromise = loadScript(
+      `https://maps.googleapis.com/maps/api/js?key=${GOOGLE_MAPS_API_KEY}&libraries=places`
+    );
+  }
+  return googleMapsLoadingPromise;
+}
+function statusColor(status){
+  return { ONLINE: '#2ea043', BERTUGAS: '#e3952a', OFFLINE: '#8B949E' }[status] || '#1565C0';
+}
+
 /* ══════════════════════════ UTIL ══════════════════════════ */
 function escapeHtml(str){
   if(str === null || str === undefined) return '';
   return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+// Semua timestamp dari server (created_at, last_updated, dst) ditulis pakai
+// waktu UTC (lihat helper now() di server.js/backoffice.route.js yang pakai
+// toISOString()). Kalau ternyata server MySQL kamu sudah jalan di jam lokal
+// WIB (bukan UTC), tinggal hapus baris "+ 7 jam" di bawah ini.
+function formatWIB(mysqlDatetime){
+  if(!mysqlDatetime) return '-';
+  const raw = String(mysqlDatetime).replace(' ', 'T');
+  const iso = raw.endsWith('Z') ? raw : raw + 'Z'; // anggap raw = UTC
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return mysqlDatetime;
+  return new Intl.DateTimeFormat('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }).format(d).replace(/\./g, ':') + ' WIB';
 }
 
 /* ══════════════════════════ START ══════════════════════════ */
