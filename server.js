@@ -2,6 +2,7 @@ const express = require('express');
 const cors    = require('cors');
 const path    = require('path');
 const http    = require('http');
+const bcrypt  = require('bcryptjs');
 const pool    = require('./db');
 require('dotenv').config();
 
@@ -62,6 +63,84 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (e) {
     console.error('[LOGIN]', e.message);
+    return response(res, 500, { message: 'Server error' });
+  }
+});
+
+/* ═══════════════════════════════════════
+   1b. BACKOFFICE REGISTER
+   POST /api/backoffice/register
+   body: { username, password, nama }
+═══════════════════════════════════════ */
+app.post('/api/backoffice/register', async (req, res) => {
+  const { username, password, nama } = req.body;
+
+  if (!username || !password || !nama)
+    return response(res, 400, { message: 'Username, password, dan nama wajib diisi' });
+  if (password.length < 6)
+    return response(res, 400, { message: 'Password minimal 6 karakter' });
+
+  try {
+    const [existing] = await pool.query(
+      `SELECT user_id FROM tbl_backoffice_user WHERE username = ? LIMIT 1`,
+      [username]
+    );
+    if (existing.length > 0)
+      return response(res, 409, { message: 'Username sudah dipakai' });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const [result] = await pool.query(
+      `INSERT INTO tbl_backoffice_user (username, password, nama, is_active)
+       VALUES (?, ?, ?, 1)`,
+      [username, hashed, nama]
+    );
+
+    return response(res, 201, {
+      message:  'Registrasi berhasil',
+      userId:   result.insertId,
+      username,
+      nama,
+    });
+  } catch (e) {
+    console.error('[BACKOFFICE-REGISTER]', e.message);
+    return response(res, 500, { message: 'Server error' });
+  }
+});
+
+/* ═══════════════════════════════════════
+   1c. BACKOFFICE LOGIN
+   POST /api/backoffice/login
+   body: { username, password }
+═══════════════════════════════════════ */
+app.post('/api/backoffice/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password)
+    return response(res, 400, { message: 'Username dan password wajib diisi' });
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT user_id, username, password, nama FROM tbl_backoffice_user
+       WHERE username = ? AND is_active = 1 LIMIT 1`,
+      [username]
+    );
+
+    if (rows.length === 0)
+      return response(res, 401, { message: 'Username atau password salah' });
+
+    const user  = rows[0];
+    const match = await bcrypt.compare(password, user.password);
+    if (!match)
+      return response(res, 401, { message: 'Username atau password salah' });
+
+    return response(res, 200, {
+      userId:   user.user_id,
+      username: user.username,
+      nama:     user.nama,
+    });
+  } catch (e) {
+    console.error('[BACKOFFICE-LOGIN]', e.message);
     return response(res, 500, { message: 'Server error' });
   }
 });
@@ -181,20 +260,12 @@ app.post('/api/save-fcm-token', async (req, res) => {
     );
 
     if (role === 'backoffice') {
-      // Dashboard SM Dispatcher belum punya sistem login/registrasi resmi,
-      // jadi baris user_id backoffice mungkin belum ada sama sekali di
-      // tabel. Pakai upsert supaya baris otomatis dibuat kalau belum ada,
-      // bukan cuma diam-diam gagal ke-update 0 baris.
-      // ⚠️ NOTE: kalau tbl_backoffice_user punya kolom lain yang wajib diisi
-      // (NOT NULL tanpa default, mis. username/password), INSERT ini akan
-      // gagal — kabari saya struktur tabelnya kalau itu terjadi.
+      // tbl_backoffice_user punya username & password NOT NULL, jadi baris
+      // user backoffice cuma boleh dibuat lewat /api/backoffice/register.
+      // Di sini kita cuma update fcm_token untuk user yang sudah terdaftar.
       await pool.query(
-        `INSERT INTO tbl_backoffice_user (user_id, nama, fcm_token)
-         VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           fcm_token = VALUES(fcm_token),
-           nama = COALESCE(VALUES(nama), nama)`,
-        [userId, nama || null, fcmToken],
+        `UPDATE tbl_backoffice_user SET fcm_token = ? WHERE user_id = ?`,
+        [fcmToken, userId],
       );
     } else {
       await pool.query(
@@ -233,6 +304,9 @@ httpServer.listen(PORT, () => {
   console.log(`🚀 GPS Backend + Socket.IO running at http://localhost:${PORT}`);
   console.log(`📋 Mobile Endpoints:`);
   console.log(`   POST /api/login`);
+  console.log(`📋 Backoffice Auth Endpoints:`);
+  console.log(`   POST /api/backoffice/register`);
+  console.log(`   POST /api/backoffice/login`);
   console.log(`   GET  /api/profile?userId=1`);
   console.log(`   POST /api/update-location`);
   console.log(`   POST /api/update-profile`);

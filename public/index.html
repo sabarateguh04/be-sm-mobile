@@ -148,6 +148,11 @@
   #gate p{font-size:12px;color:var(--muted);margin-bottom:20px;}
   #gate .field{margin-bottom:12px;text-align:left;}
   #gate .btn{width:100%;padding:10px;margin-top:6px;}
+  .gate-tabs{display:flex;background:var(--navy2);border:1px solid var(--border);border-radius:10px;padding:4px;margin-bottom:18px;}
+  .gate-tab{flex:1;padding:8px;border:none;background:none;color:var(--muted);font-size:12.5px;font-weight:700;
+    border-radius:7px;}
+  .gate-tab.active{background:var(--primary);color:#fff;}
+  .gate-error{font-size:11.5px;color:var(--red);text-align:left;margin:-4px 0 10px;}
 
   /* ── NOTIF PANEL ── */
   #notif-panel{position:fixed;top:0;right:-360px;width:360px;height:100vh;background:var(--surface);
@@ -195,20 +200,53 @@
     <div class="icon">📡</div>
     <h2>SM Dispatcher</h2>
     <p>Masuk sebagai akun backoffice untuk memantau &amp; menerima notifikasi realtime</p>
-    <div class="field">
-      <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Nama</label>
-      <input id="gate-nama" placeholder="Nama kamu">
+
+    <div class="gate-tabs">
+      <button type="button" class="gate-tab active" id="tab-login-btn" onclick="switchGateTab('login')">Masuk</button>
+      <button type="button" class="gate-tab" id="tab-register-btn" onclick="switchGateTab('register')">Daftar</button>
     </div>
-    <div class="field">
-      <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">User ID Backoffice</label>
-      <input id="gate-userid" type="number" placeholder="Contoh: 1">
+
+    <!-- LOGIN FORM -->
+    <div id="tab-login">
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Username</label>
+        <input id="login-username" placeholder="Username">
+      </div>
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Password</label>
+        <input id="login-password" type="password" placeholder="Password">
+      </div>
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Base URL Server</label>
+        <input id="gate-baseurl" value="http://103.114.110.67:3005">
+      </div>
+      <p id="gate-error" class="gate-error" style="display:none;"></p>
+      <button class="btn" onclick="doLogin()">Masuk</button>
     </div>
-    <div class="field">
-      <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Base URL Server</label>
-      <input id="gate-baseurl" value="http://103.114.110.67:3005">
+
+    <!-- REGISTER FORM -->
+    <div id="tab-register" style="display:none;">
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Nama</label>
+        <input id="reg-nama" placeholder="Nama kamu">
+      </div>
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Username</label>
+        <input id="reg-username" placeholder="Buat username">
+      </div>
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Password</label>
+        <input id="reg-password" type="password" placeholder="Minimal 6 karakter">
+      </div>
+      <div class="field">
+        <label style="display:block;text-align:left;font-size:11px;color:var(--muted);margin-bottom:5px;">Base URL Server</label>
+        <input id="reg-baseurl" value="http://103.114.110.67:3005">
+      </div>
+      <p id="gate-error-reg" class="gate-error" style="display:none;"></p>
+      <button class="btn" onclick="doRegister()">Daftar &amp; Masuk</button>
     </div>
-    <button class="btn" onclick="doLogin()">Masuk</button>
-    <p class="muted-note">User ID ini dipakai untuk registrasi token notifikasi (Socket.IO realtime + FCM). Belum ada sistem login resmi — ID cukup unik per staff backoffice.</p>
+
+    <p class="muted-note">Akun backoffice dipakai untuk registrasi token notifikasi (Socket.IO realtime + FCM).</p>
   </div>
 </div>
 
@@ -355,22 +393,122 @@ let taskTotalPages = 1;
 let petugasCache = [];   // untuk lookup nama di notif & checklist assign
 let taskCache    = {};   // taskId -> {title, address} untuk enrich notif realtime
 
+/* ══════════════════════════ SUARA NOTIFIKASI ══════════════════════════ */
+let audioCtx = null;
+function ensureAudioCtx(){
+  // Browser modern cuma izinkan audio jalan setelah ada gesture user
+  // (klik, tap, dsb). Kita panggil ini di setiap klik tombol gate supaya
+  // audio context ke-"unlock" sebelum notif realtime pertama masuk.
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(_){}
+  }
+  if(audioCtx && audioCtx.state === 'suspended'){ audioCtx.resume().catch(()=>{}); }
+  return audioCtx;
+}
+function playNotifSound(){
+  const ctx = ensureAudioCtx();
+  if(!ctx) return;
+  try{
+    const beep = (freq, start, dur, peak) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(peak, ctx.currentTime + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    };
+    // Nada "ding-dong" pendek
+    beep(880,  0,    0.32, 0.25);
+    beep(1175, 0.15, 0.28, 0.2);
+  }catch(_){}
+}
+
 const NOTIF_KEY = 'smd_notifs';
 function getNotifs(){ try{ return JSON.parse(localStorage.getItem(NOTIF_KEY)||'[]'); }catch(_){ return []; } }
 function setNotifs(list){ localStorage.setItem(NOTIF_KEY, JSON.stringify(list.slice(0,80))); }
 
 /* ══════════════════════════ IDENTITY / GATE ══════════════════════════ */
-function doLogin(){
-  const nama    = document.getElementById('gate-nama').value.trim();
-  const userId  = document.getElementById('gate-userid').value.trim();
-  const baseUrl = document.getElementById('gate-baseurl').value.trim().replace(/\/$/,'');
-  if(!nama || !userId){ alert('Nama dan User ID wajib diisi'); return; }
+function switchGateTab(tab){
+  ensureAudioCtx(); // unlock audio dari gesture klik user paling awal
+  const isLogin = tab === 'login';
+  document.getElementById('tab-login').style.display    = isLogin ? 'block' : 'none';
+  document.getElementById('tab-register').style.display  = isLogin ? 'none' : 'block';
+  document.getElementById('tab-login-btn').classList.toggle('active', isLogin);
+  document.getElementById('tab-register-btn').classList.toggle('active', !isLogin);
+  hideGateError();
+}
 
-  IDENTITY = { nama, userId: Number(userId) };
-  BASE_URL = baseUrl || BASE_URL;
-  localStorage.setItem('smd_identity', JSON.stringify(IDENTITY));
-  localStorage.setItem('smd_base_url', BASE_URL);
-  boot();
+function showGateError(msg, forReg){
+  const el = document.getElementById(forReg ? 'gate-error-reg' : 'gate-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+function hideGateError(){
+  document.getElementById('gate-error').style.display = 'none';
+  document.getElementById('gate-error-reg').style.display = 'none';
+}
+
+async function doLogin(){
+  ensureAudioCtx();
+  hideGateError();
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const baseUrl  = document.getElementById('gate-baseurl').value.trim().replace(/\/$/,'');
+  if(!username || !password){ showGateError('Username dan password wajib diisi'); return; }
+
+  const url = (baseUrl || BASE_URL) + '/api/backoffice/login';
+  try{
+    const res  = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await res.json();
+    if(!res.ok){ showGateError(data.message || 'Login gagal'); return; }
+
+    IDENTITY = { nama: data.nama, userId: data.userId, username: data.username };
+    BASE_URL = baseUrl || BASE_URL;
+    localStorage.setItem('smd_identity', JSON.stringify(IDENTITY));
+    localStorage.setItem('smd_base_url', BASE_URL);
+    boot();
+  }catch(e){
+    showGateError('Tidak bisa menghubungi server. Cek Base URL.');
+  }
+}
+
+async function doRegister(){
+  ensureAudioCtx();
+  hideGateError();
+  const nama     = document.getElementById('reg-nama').value.trim();
+  const username = document.getElementById('reg-username').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const baseUrl  = document.getElementById('reg-baseurl').value.trim().replace(/\/$/,'');
+  if(!nama || !username || !password){ showGateError('Semua field wajib diisi', true); return; }
+  if(password.length < 6){ showGateError('Password minimal 6 karakter', true); return; }
+
+  const url = (baseUrl || BASE_URL) + '/api/backoffice/register';
+  try{
+    const res  = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, nama }),
+    });
+    const data = await res.json();
+    if(!res.ok){ showGateError(data.message || 'Registrasi gagal', true); return; }
+
+    // Langsung masuk setelah daftar, tanpa perlu login ulang
+    IDENTITY = { nama: data.nama, userId: data.userId, username: data.username };
+    BASE_URL = baseUrl || BASE_URL;
+    localStorage.setItem('smd_identity', JSON.stringify(IDENTITY));
+    localStorage.setItem('smd_base_url', BASE_URL);
+    boot();
+  }catch(e){
+    showGateError('Tidak bisa menghubungi server. Cek Base URL.', true);
+  }
 }
 
 function doLogout(){
@@ -469,6 +607,7 @@ function pushNotif({type, title, body, taskId}){
   list.unshift(item);
   setNotifs(list);
   renderNotifPanel();
+  playNotifSound();
   showToast(item);
   showBrowserNotif(item);
 }
@@ -861,13 +1000,15 @@ function escapeHtml(str){
 }
 
 /* ══════════════════════════ START ══════════════════════════ */
+// Fallback unlock audio: kalau user langsung ke-auto-login (skip klik tombol
+// gate), context baru ke-unlock di interaksi pertama di halaman manapun.
+document.addEventListener('click', ensureAudioCtx, { once: true });
+
 if(IDENTITY && IDENTITY.userId){
-  document.getElementById('gate-nama').value = IDENTITY.nama || '';
-  document.getElementById('gate-userid').value = IDENTITY.userId || '';
-  document.getElementById('gate-baseurl').value = BASE_URL;
-  boot();
+  boot(); // sudah pernah login sebelumnya, identity tersimpan di localStorage
 } else {
   document.getElementById('gate-baseurl').value = BASE_URL;
+  document.getElementById('reg-baseurl').value = BASE_URL;
 }
 </script>
 </body>
