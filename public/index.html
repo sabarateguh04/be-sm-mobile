@@ -357,13 +357,21 @@
       <!-- PAGE: MONITOR -->
       <div class="page" id="page-monitor">
         <div class="card">
-          <div class="toolbar" style="justify-content:space-between;">
+          <div class="toolbar" style="justify-content:space-between;flex-wrap:wrap;gap:12px;">
             <div class="monitor-legend">
               <span class="legend-dot" style="background:#2ea043;"></span> Online
-              <span class="legend-dot" style="background:#e3952a;"></span> Bertugas
-              <span class="legend-dot" style="background:#8B949E;"></span> Offline
+              <span class="legend-dot" style="background:#e6c200;"></span> Bertugas
+              <span class="legend-dot" style="background:#da3633;"></span> Offline
             </div>
-            <div style="display:flex;align-items:center;gap:10px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <input id="monitor-search" placeholder="Cari nama petugas..." style="width:180px;"
+                oninput="filterMonitorMarkers()">
+              <select id="monitor-filter" onchange="filterMonitorMarkers()">
+                <option value="">Semua Status</option>
+                <option value="ONLINE">Online</option>
+                <option value="BERTUGAS">Bertugas</option>
+                <option value="OFFLINE">Offline</option>
+              </select>
               <span id="monitor-count" class="muted-note" style="margin:0;">Memuat...</span>
               <button class="btn secondary sm" onclick="refreshMonitorMarkers()">↻ Refresh</button>
             </div>
@@ -630,6 +638,7 @@ function connectSocket(){
         lat: data.lat, lng: data.lng,
         status: data.status, last_updated: data.last_updated,
       });
+      filterMonitorMarkers();
     }
   });
 }
@@ -995,6 +1004,7 @@ async function refreshMonitorMarkers(){
     });
 
     document.getElementById('monitor-count').textContent = `${list.length} petugas terdaftar`;
+    filterMonitorMarkers(); // terapkan ulang filter status/pencarian yang lagi aktif
 
     // Auto-fit peta ke semua marker yang punya lokasi, sekali saat pertama render
     if(hasAny && !monitorMap.__fitted){
@@ -1015,6 +1025,7 @@ function upsertMonitorMarker(p){
   if(monitorMarkers[id]){
     monitorMarkers[id].setPosition(pos);
     monitorMarkers[id].set('icon', markerIcon(p.status));
+    monitorMarkers[id].petugasData = p;
     monitorMarkers[id].infoWindowRef.setContent(monitorInfoHtml(p));
   } else {
     const marker = new google.maps.Marker({
@@ -1023,15 +1034,42 @@ function upsertMonitorMarker(p){
     const info = new google.maps.InfoWindow({ content: monitorInfoHtml(p) });
     marker.addListener('click', () => info.open(monitorMap, marker));
     marker.infoWindowRef = info;
+    marker.petugasData = p;
     monitorMarkers[id] = marker;
   }
 }
 
+/* Filter berdasarkan status (dropdown) + pencarian nama (input) */
+function filterMonitorMarkers(){
+  if(!monitorMap) return;
+  const status = document.getElementById('monitor-filter').value;
+  const search = document.getElementById('monitor-search').value.trim().toLowerCase();
+
+  let visibleCount = 0;
+  Object.values(monitorMarkers).forEach(m => {
+    const p = m.petugasData || {};
+    const matchStatus = !status || p.status === status;
+    const matchSearch  = !search || (p.nama || '').toLowerCase().includes(search);
+    const visible = matchStatus && matchSearch;
+    m.setMap(visible ? monitorMap : null);
+    if(visible) visibleCount++;
+  });
+
+  const total = Object.keys(monitorMarkers).length;
+  document.getElementById('monitor-count').textContent =
+    (status || search) ? `${visibleCount} dari ${total} petugas` : `${total} petugas terdaftar`;
+}
+
 function markerIcon(status){
+  const color = statusColor(status);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="36" viewBox="0 0 30 36">
+    <path d="M15 0 L28 5 V16 C28 25 22 32 15 36 C8 32 2 25 2 16 V5 Z" fill="${color}" stroke="#ffffff" stroke-width="2"/>
+    <text x="15" y="23" font-family="Arial, sans-serif" font-size="13" font-weight="bold" text-anchor="middle" fill="#ffffff">P</text>
+  </svg>`;
   return {
-    path: google.maps.SymbolPath.CIRCLE, scale: 8,
-    fillColor: statusColor(status), fillOpacity: 1,
-    strokeColor: '#fff', strokeWeight: 2,
+    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(30, 36),
+    anchor: new google.maps.Point(15, 36),
   };
 }
 function monitorInfoHtml(p){
@@ -1210,7 +1248,7 @@ function ensureGoogleMaps(){
   return googleMapsLoadingPromise;
 }
 function statusColor(status){
-  return { ONLINE: '#2ea043', BERTUGAS: '#e3952a', OFFLINE: '#8B949E' }[status] || '#1565C0';
+  return { ONLINE: '#2ea043', BERTUGAS: '#e6c200', OFFLINE: '#da3633' }[status] || '#1565C0';
 }
 
 /* ══════════════════════════ UTIL ══════════════════════════ */
